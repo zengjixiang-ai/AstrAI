@@ -1,6 +1,6 @@
 # Preprocessing Pipeline
 
-Declarative JSON-driven data preprocessing. No code needed -- describe your input format and mask rules in a config file, the engine does the rest.
+Declarative JSON-driven data preprocessing. One `SectionedMaskBuilder` handles all formats via `input.sections` (single-output) or `input.sources` (multi-output).
 
 ## Philosophy
 
@@ -9,18 +9,57 @@ Declarative JSON-driven data preprocessing. No code needed -- describe your inpu
 | `tokenizer_config.json` (`chat_template`) | Formatting -- how roles become tokens |
 | `pipeline.json` (`mask`) | Masking -- which roles participate in training |
 
-The two are fully decoupled. A single config file captures the entire pipeline, reusable and version-controllable. Extension is via factory registration (`@MaskBuilderFactory.register`) -- no need to touch existing code.
+A single config file captures the entire pipeline, reusable and version-controllable.
+
+## Config Structure
+
+```json
+{
+  "input":         {},   // sections (single) or sources (multi)
+  "mask":          {},   // role → "train" | "mask"
+  "mask_default":  "mask",
+  "preprocessing": {},
+  "output":        {}
+}
+```
+
+### Section Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `field` | str | -- | JSONL key to read |
+| `action` | str | -- | `"train"` / `"mask"` / `"$role"` |
+| `template` | bool | `false` | Apply `chat_template` per message |
+| `add_special_tokens` | bool | `true` for first non-template section | Add special tokens during encode |
+
+### Source Fields (multi-output mode)
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `sections` | list[dict] | -- | Same as single-output section list |
+| `list_field` | bool | `false` | JSONL field holds a list; tokenise each element |
+| `mask_key` | str | `"{key}_mask"` | Explicit output key for loss mask |
+
+---
 
 ## Quick Start
 
 ### SFT Chat
 
+Input JSONL:
+
+```json
+{"messages": [{"role": "system", "content": "You are helpful."}, {"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Hello!"}]}
+```
+
+Config:
+
 ```json
 {
-  "version": 1,
   "input": {
-    "type": "chat",
-    "messages_key": "messages"
+    "sections": [
+      {"field": "messages", "action": "$role", "template": true}
+    ]
   },
   "mask": {
     "system": "mask",
@@ -29,172 +68,225 @@ The two are fully decoupled. A single config file captures the entire pipeline, 
   },
   "mask_default": "mask",
   "preprocessing": {
-    "max_seq_len": 2048,
-    "deduplicate": true
+    "max_seq_len": 2048
   },
   "output": {
-    "domain_key": "source",
     "storage_format": "bin",
-    "max_tokens_per_shard": 100000000
+    "dtype": {"loss_mask": "bool"}
   }
 }
 ```
 
-Three lines of mask rules cover the most common SFT case: train on assistant turns, mask everything else.
+Output keys: `sequence` (int32), `loss_mask` (bool)
 
-### Instruction Tuning
+### SFT Instruction
+
+Input JSONL:
+
+```json
+{"prompt": "Translate to French: Hello", "response": "Bonjour"}
+```
+
+Config:
 
 ```json
 {
-  "version": 1,
   "input": {
-    "type": "instruction",
-    "prompt_key": "instruction",
-    "response_key": "output"
-  },
-  "mask": {
-    "prompt": "mask",
-    "response": "train"
+    "sections": [
+      {"field": "prompt",   "action": "mask", "add_special_tokens": true},
+      {"field": "response", "action": "train"}
+    ]
   },
   "mask_default": "mask",
   "preprocessing": {
     "max_seq_len": 2048
-  },
-  "output": {
-    "storage_format": "bin"
   }
 }
 ```
 
-Mask splits at the prompt/response field boundary.
+Output keys: `sequence`, `loss_mask`
 
-### Pretraining
+### Pretrain
+
+Input JSONL:
+
+```json
+{"text": "Artificial Intelligence is a field of computer science..."}
+```
+
+Config:
 
 ```json
 {
-  "version": 1,
   "input": {
-    "type": "text",
-    "text_key": "content"
+    "sections": [
+      {"field": "text", "action": "train"}
+    ]
   },
-  "mask": {},
   "preprocessing": {
-    "max_seq_len": 2048,
-    "min_chars": 50
-  },
-  "output": {
-    "storage_format": "bin"
+    "max_seq_len": 8192,
+    "min_chars": 100
   }
 }
 ```
 
-No mask -- train on all tokens.
+Output keys: `sequence` (no `loss_mask` — all tokens trained)
 
-### Run
+### DPO
 
-```bash
-python scripts/tools/preprocess.py data/*.jsonl -o output/ -c sft.json
+Input JSONL:
+
+```json
+{"chosen": [{"role": "user", "content": "What is 2+2?"}, {"role": "assistant", "content": "4"}], "rejected": [{"role": "user", "content": "What is 2+2?"}, {"role": "assistant", "content": "5"}]}
 ```
+
+Config:
+
+```json
+{
+  "input": {
+    "sources": {
+      "chosen": {
+        "sections": [
+          {"field": "chosen", "action": "$role", "template": true}
+        ]
+      },
+      "rejected": {
+        "sections": [
+          {"field": "rejected", "action": "$role", "template": true}
+        ]
+      }
+    }
+  },
+  "mask": {
+    "user": "mask",
+    "assistant": "train"
+  },
+  "mask_default": "mask"
+}
+```
+
+Output keys: `chosen`, `chosen_mask`, `rejected`, `rejected_mask`
+
+### GRPO
+
+Input JSONL:
+
+```json
+{"prompt": [{"role": "user", "content": "What is 2+2?"}], "responses": ["4", "Five", "Four"], "rewards": [1.0, 0.3, 0.8]}
+```
+
+Config:
+
+```json
+{
+  "input": {
+    "sources": {
+      "prompts": {
+        "sections": [
+          {"field": "prompt", "action": "mask", "template": true}
+        ]
+      },
+      "responses": {
+        "sections": [
+          {"field": "responses", "action": "train"}
+        ],
+        "list_field": true,
+        "mask_key": "masks"
+      },
+      "rewards": {
+        "sections": [
+          {"field": "rewards", "action": "value"}
+        ]
+      }
+    }
+  },
+  "mask": {
+    "user": "mask",
+    "assistant": "train"
+  },
+  "mask_default": "mask"
+}
+```
+
+Output keys: `prompts`, `responses`, `masks`, `rewards` (float32)
+
+- `action: "value"` — extract raw values from JSONL without tokenisation
+- `list_field: true` — tokenise each list element independently, then concatenate
+- `mask_key: "masks"` — rename the auto-generated mask key (default: `responses_mask`)
+
+---
 
 ## Configuration Reference
 
 ### `input`
 
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `type` | string | yes | `"chat"` | Format: `"chat"`, `"instruction"`, or `"text"` |
-| `messages_key` | string | no | `"messages"` | JSON key for messages array (chat) |
-| `prompt_key` | string | no | `"prompt"` | JSON key for prompt field (instruction) |
-| `response_key` | string | no | `"response"` | JSON key for response field (instruction) |
-| `text_key` | string | no | `"text"` | JSON key for text field |
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `sections` | list[dict] or null | `null` | Section specs for single-output mode |
+| `sources` | dict[str, dict] or null | `null` | Source specs for multi-output mode (DPO/GRPO) |
+
+When `sources` is set, `sections` is ignored.
 
 ### `mask`
 
-A map of `{role_or_field: "mask" | "train"}`. The engine uses this to build `loss_mask`:
-
-- `"mask"` -- tokens in this span are ignored during training (`loss_mask=0`)
-- `"train"` -- tokens in this span contribute to the loss (`loss_mask=1`)
-
-For chat mode, keys are role names (`system`, `user`, `assistant`, ...).
-For instruction mode, keys are `"prompt"` and `"response"`.
-
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `mask` | dict | `{}` | Role/field to action mapping |
-| `mask_default` | string | `"mask"` | Default action for unlisted roles |
+| `mask` | dict | `{}` | `{role: "train" \| "mask"}` |
+| `mask_default` | str | `"mask"` | Default action for unlisted roles |
 
 ### `preprocessing`
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `max_seq_len` | int | `2048` | Maximum token length; truncated if exceeded |
-| `min_chars` | int | `50` | Minimum character length; dropped if shorter (text mode only) |
-| `max_chars` | int | `2000000` | Maximum character length; dropped if longer (text mode only) |
-| `deduplicate` | bool | `true` | Remove exact duplicates via MD5 of first 200 chars |
-| `max_items` | int or null | `null` | Maximum items to process; `null` = unlimited |
+| `max_seq_len` | int | `2048` | Truncate sequences to this length |
+| `min_chars` | int | `50` | Skip text-mode items shorter than this |
+| `max_chars` | int | `2000000` | Skip text-mode items longer than this |
+| `max_items` | int or null | `null` | Stop after N documents |
 
 ### `output`
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `domain_key` | string or null | `null` | JSON key for domain grouping; `null` = all output to `__default__` |
-| `storage_format` | string | `"bin"` | `"bin"` (mmap, zero-copy) or `"h5"` (HDF5) |
-| `max_tokens_per_shard` | int | `100000000` | Max tokens per output shard |
+| `domain_key` | str or null | `null` | JSONL key for domain grouping |
+| `storage_format` | str | `"bin"` | `"bin"` (mmap) or `"h5"` |
+| `max_tokens_per_shard` | int | `100000000` | Flush threshold in cumulative tokens |
+| `dtype` | dict[str, str] | `{}` | Per-key tensor dtype override (e.g. `{"loss_mask": "bool"}`) |
+
+---
 
 ## Mask Algorithm
 
-### Chat Mode (role-span tracking)
+### Template mode (`template: true`)
 
-For each message in the `messages` array:
+For each message in the field's array:
 
-1. Prepend BOS token (position 0, always masked)
-2. Render through the chat template for that single message
-3. Encode the rendered text, record token span `(start, end, role)`
-4. Concatenate all spans — special tokens from the chat template naturally prevent BPE merging across message boundaries
-5. Fill `loss_mask` from the mask rules
+1. Prepend BOS token (masked)
+2. Render through `chat_template` for that single message
+3. Encode rendered text
+4. Apply mask rule for the message's role
 
-**Multi-turn example**:
+### Non-template mode
 
-```
-Data:
-  [system: "You are helpful."]
-  [user: "What is 2+2?"]
-  [assistant: "4"]
-  [user: "What is 3+3?"]
-  [assistant: "6"]
+Encode the field value as text. Mask value is 1 (train) or 0 (mask) per the section's `action`.
 
-Config:
-  "mask": {"system": "mask", "user": "mask", "assistant": "train"}
+### Text config detection
 
-Result:
-  tokens:  <bos> [system span] [user span] [assistant:4 span] [user span] [assistant:6 span]
-  mask:      0       0            0              1               0             1
-```
+When no section uses `template` and all sections have `action: "train"`, the builder skips mask generation entirely — all tokens are trained.
 
-Both assistant turns are trained. All system and user tokens are masked.
-
-### Instruction Mode (field boundary)
-
-Encode the prompt and response fields independently, then split the mask at the field boundary.
-
-- `"prompt": "mask", "response": "train"` -- mask the left half, train the right half
-- `"prompt": "train", "response": "mask"` -- the reverse
-
-### Text Mode (no mask)
-
-Pure tokenization. No `loss_mask` is produced. Used for pretraining.
+---
 
 ## Output Layout
 
 ### Single-Shard (`bin`)
 
 ```
-output_dir/
-  __default__/              # when domain_key is null
-    meta.json               # {"sequence": {"shape": [N], "dtype": "int64"}, ...}
-    sequence.bin            # int64 raw bytes, mmap-able for zero-copy reads
-    loss_mask.bin           # int64 raw bytes
-  wiki/                     # when domain_key="source" and item["source"]="wiki"
+output/
+  __default__/
+    meta.json
+    sequence.bin
+    loss_mask.bin
+  wiki/
     meta.json
     sequence.bin
     loss_mask.bin
@@ -202,10 +294,10 @@ output_dir/
 
 ### Multi-Shard (`bin`)
 
-When `max_tokens_per_shard` is exceeded, bin output is split into numbered shard subdirectories:
+When `max_tokens_per_shard` is exceeded:
 
 ```
-output_dir/
+output/
   __default__/
     shard_0000/
       meta.json
@@ -217,67 +309,38 @@ output_dir/
       loss_mask.bin
 ```
 
-`MmapStore` automatically discovers and merges all shards under the domain directory.
+`MmapStore` discovers all shards under the domain directory via `rglob("meta.json")`.
 
-### H5 Output
+---
 
-HDF5 files are always named with a shard index, avoiding overwrite regardless of `max_tokens_per_shard`:
+## CLI
 
+```bash
+# SFT
+python scripts/tools/preprocess.py data/sft/*.jsonl -o output/sft/ -c configs/sft_chat.json
+
+# DPO
+python scripts/tools/preprocess.py data/dpo/*.jsonl -o output/dpo/ -c configs/dpo.json --tokenizer_path params
+
+# GRPO
+python scripts/tools/preprocess.py data/grpo/*.jsonl -o output/grpo/ -c configs/grpo.json
 ```
-output_dir/
-  __default__/
-    data_0000.h5            # each H5 contains key→dataset groups
-    data_0001.h5
-  wiki/
-    data_0000.h5
-```
 
-## Python API Usage
+---
+
+## Python API
 
 ```python
 from astrai.preprocessing.pipeline import Pipeline
 from astrai.config.preprocess_config import PipelineConfig
 
-config = PipelineConfig.from_json("sft_pipeline.json")
+config = PipelineConfig.from_json("sft.json")
 Pipeline(
     config,
     ["data_part1.jsonl", "data_part2.jsonl"],
     output_dir="output/",
-    tokenizer_path="params"
+    tokenizer_path="params",
 ).run()
 ```
 
-Or from the CLI:
-
-```bash
-python scripts/tools/preprocess.py data/*.jsonl -o output/ -c sft.json
-```
-
-## Extension
-
-Register a custom builder for new formats:
-
-```python
-from astrai.preprocessing.builder import BaseMaskBuilder, MaskBuilderFactory
-
-@MaskBuilderFactory.register("my_format")
-class MyFormatBuilder(BaseMaskBuilder):
-    def build(self, item: dict, config, tokenizer) -> dict | None:
-        # Return {"ids": [...], "loss_mask": [...], "domain": "..."}
-        # Return None to skip this item
-        ...
-```
-
-Then set `"input": {"type": "my_format"}` in your config.
-
-## Compared to Old Pipeline
-
-| Old (`astrai.preprocess.Pipeline`) | New (`astrai.preprocessing.pipeline.Pipeline`) |
-|---|---|
-| Configured via constructor arguments | Configured via JSON file |
-| Hardcoded `_transform_chat` / `_transform_text` | Factory-registered `Builder` with declarative mask rules |
-| Auto-detects format via magic key lists | Explicit `input.type` declaration |
-| Double-encodes (full + prompt), uses length diff for mask | Single-encode with role-span tracking |
-| Only trains the last assistant turn | Configurable: multi-turn, single-turn, or no mask |
-
-> Document Update Time: 2026-05-30
+> Document Update Time: 2026-06-03

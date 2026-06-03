@@ -81,17 +81,20 @@ class Pipeline:
             if result is None:
                 continue
 
-            ids = result.pop("sequence")
+            domain = result.pop("domain", "__default__")
+
+            is_multi = bool(getattr(self.config.input, "sources", None))
+            if is_multi:
+                ids = self._primary_ids(result)
+            else:
+                ids = result.pop("sequence")
+                result["sequence"] = ids
+
             if not ids:
                 continue
 
-            domain = result.pop("domain", "__default__")
-            result["sequence"] = ids
-
             bucket = domains[domain]
-            for key in list(bucket.keys()):
-                if key not in result:
-                    bucket[key].append([1] * len(ids))
+            self._align_bucket(bucket, result, ids, is_multi)
             for key, val in result.items():
                 bucket[key].append(val)
 
@@ -107,6 +110,27 @@ class Pipeline:
             self._flush(domains, shard_idx)
 
         print(f"Done. {count} documents tokenized.")
+
+    @staticmethod
+    def _primary_ids(result: dict) -> list:
+        """Return the first list-valued entry in *result* as the primary id
+        sequence for token counting."""
+        for val in result.values():
+            if isinstance(val, list) and val and isinstance(val[0], int):
+                return val
+        return []
+
+    @staticmethod
+    def _align_bucket(bucket: dict, result: dict, ids: list, is_multi: bool):
+        """Pad previously-accumulated keys that are missing from *result*."""
+        for key in list(bucket.keys()):
+            if key in result:
+                continue
+            if is_multi:
+                pad = bucket[key][-1] if bucket[key] else [1] * len(ids)
+                bucket[key].append(pad)
+            else:
+                bucket[key].append([1] * len(ids))
 
     def _iter_items(self):
         for path in self.paths:
@@ -135,7 +159,8 @@ class Pipeline:
             else:
                 save_h5(chunk_dir, f"data_{idx:04d}", tensors)
             shard_idx[domain] = idx + 1
+            first_key = "sequence" if "sequence" in tensors else next(iter(tensors))
             tqdm.tqdm.write(
                 f"  saved {domain}/shard_{idx:04d}  "
-                f"({tensors['sequence'][0].numel():,} tokens)"
+                f"({tensors[first_key][0].numel():,} tokens)"
             )

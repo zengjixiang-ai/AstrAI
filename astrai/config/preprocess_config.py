@@ -1,4 +1,9 @@
-"""Pipeline configuration for JSONL preprocessing."""
+"""Pipeline configuration for JSONL preprocessing.
+
+Supports single-sequence (SFT/pretrain) and multi-output (DPO/GRPO)
+modes, both driven declaratively through ``input.sections`` or
+``input.sources``.
+"""
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
@@ -8,7 +13,22 @@ from astrai.config.base import BaseConfig
 
 @dataclass
 class InputConfig(BaseConfig):
+    """Declarative input mapping.
+
+    Single-output mode (backward-compatible)::
+
+        {"input": {"sections": [{"field": "messages", ...}]}}
+
+    Multi-output mode (DPO / GRPO)::
+
+        {"input": {"sources": {
+            "chosen": {"sections": [{"field": "chosen", ...}]},
+            "rejected": {"sections": [{"field": "rejected", ...}]},
+        }}}
+    """
+
     sections: Optional[List[Dict]] = None
+    sources: Optional[Dict[str, Dict]] = None
 
 
 @dataclass
