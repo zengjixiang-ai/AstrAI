@@ -144,6 +144,7 @@ class Pipeline:
     def _flush(self, domains, shard_idx):
         for domain, keys in domains.items():
             idx = shard_idx[domain]
+            chunk_dir = os.path.join(self.output_dir, domain)
             tensors = {}
             for key, ids_list in keys.items():
                 dt = _STR_TO_DTYPE.get(
@@ -152,10 +153,22 @@ class Pipeline:
                 tensors[key] = [
                     torch.tensor(list(chain.from_iterable(ids_list)), dtype=dt)
                 ]
-            chunk_dir = os.path.join(self.output_dir, domain)
+
+            pid_mode = self.config.output.position_ids_mode
+            if pid_mode and pid_mode != "none" and "sequence" in tensors:
+                pos_ids = []
+                if pid_mode == "doc_reset":
+                    for item in keys["sequence"]:
+                        pos_ids.extend(range(len(item)))
+                else:
+                    total = sum(len(item) for item in keys["sequence"])
+                    pos_ids = list(range(total))
+                tensors["position_ids"] = [torch.tensor(pos_ids, dtype=torch.int32)]
+
+            shard_path = os.path.join(chunk_dir, f"shard_{idx:04d}")
             fmt = self.config.output.storage_format
             if fmt == "bin":
-                save_bin(os.path.join(chunk_dir, f"shard_{idx:04d}"), tensors)
+                save_bin(shard_path, tensors)
             else:
                 save_h5(chunk_dir, f"data_{idx:04d}", tensors)
             shard_idx[domain] = idx + 1

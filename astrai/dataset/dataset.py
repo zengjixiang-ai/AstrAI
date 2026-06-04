@@ -223,7 +223,7 @@ class SFTDataset(BaseDataset):
 
     @property
     def required_keys(self) -> List[str]:
-        return ["sequence", "loss_mask"]
+        return ["sequence", "loss_mask", "position_ids"]
 
     def _fetch_data(self, begin_idx: int, end_idx: int, key: str) -> Tensor:
         return self.storage.fetch(begin_idx, end_idx, key)
@@ -231,15 +231,17 @@ class SFTDataset(BaseDataset):
     def __getitem__(self, index):
         begin_idx, end_idx = self.get_index(index)
 
-        x = self._fetch_data(begin_idx, end_idx, "sequence").to(dtype=torch.long)
-        y = self._fetch_data(begin_idx + 1, end_idx + 1, "sequence").to(
-            dtype=torch.long
-        )
-        loss_mask = self._fetch_data(begin_idx + 1, end_idx + 1, "loss_mask").to(
-            dtype=torch.bool
-        )
+        x = self._fetch_data(begin_idx, end_idx, "sequence")
+        y = self._fetch_data(begin_idx + 1, end_idx + 1, "sequence")
+        position_ids = self._fetch_data(begin_idx, end_idx, "position_ids")
+        loss_mask = self._fetch_data(begin_idx + 1, end_idx + 1, "loss_mask")
 
-        return {"input_ids": x, "target_ids": y, "loss_mask": loss_mask}
+        return {
+            "input_ids": x.to(dtype=torch.long),
+            "target_ids": y.to(dtype=torch.long),
+            "position_ids": position_ids.to(dtype=torch.long),
+            "loss_mask": loss_mask.to(dtype=torch.bool),
+        }
 
 
 @DatasetFactory.register("dpo")

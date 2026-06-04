@@ -45,6 +45,13 @@ class OutputConfig(BaseConfig):
     storage_format: str = "bin"
     max_tokens_per_shard: int = 100_000_000
     dtype: Dict[str, str] = field(default_factory=dict)
+    position_ids_mode: Optional[str] = None
+    """How to compute position_ids in packed sequences.
+
+    - ``None`` / ``"none"``: do not generate (backward compatible).
+    - ``"doc_reset"``: reset to 0 at each document boundary.
+    - ``"continuous"``: sequential 0, 1, 2, ... (pretrain, single doc).
+    """
 
 
 @dataclass
