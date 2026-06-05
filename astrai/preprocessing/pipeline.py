@@ -8,7 +8,7 @@ import json
 import os
 from collections import defaultdict
 from itertools import chain
-from typing import Optional
+from typing import List, Optional, Tuple
 
 import torch
 import tqdm
@@ -33,6 +33,65 @@ _STR_TO_DTYPE: dict[str, torch.dtype] = {
 
 def filter_by_length(text: str, min_len: int = 50, max_len: int = 2_000_000) -> bool:
     return min_len <= len(text) <= max_len
+
+
+def _truncate(seq: list, max_len: int, mode: str) -> list:
+    if len(seq) <= max_len:
+        return seq
+    if mode == "keep_end":
+        return seq[-max_len:]
+    return seq[:max_len]
+
+
+def pack_sequences(
+    sequences: List[list],
+    max_packed_len: int,
+    strategy: str,
+    truncation_mode: str,
+) -> List[Tuple[int, int]]:
+    """Pack *sequences* into bins and return a reorder plan.
+
+    Returns a list of ``(orig_idx, truncated_length)`` in flush order.
+    All keys (sequence, loss_mask, …) must be reordered and truncated
+    identically according to this plan.
+
+    Supported *strategy* values:
+
+    - ``"simple"``: sequential, no reordering.
+    - ``"bfd"``: best-fit decreasing bin packing.
+    """
+    n = len(sequences)
+    if strategy == "simple":
+        return [(i, min(len(sequences[i]), max_packed_len)) for i in range(n)]
+
+    order = sorted(range(n), key=lambda i: len(sequences[i]), reverse=True)
+    bins: List[List[int]] = []
+    bin_lengths: List[int] = []
+
+    for orig_idx in order:
+        seq_len = min(len(sequences[orig_idx]), max_packed_len)
+
+        best_bin = None
+        best_remain = max_packed_len + 1
+        for i, bl in enumerate(bin_lengths):
+            remain = max_packed_len - bl
+            if seq_len <= remain < best_remain:
+                best_remain = remain
+                best_bin = i
+
+        if best_bin is not None:
+            bins[best_bin].append(orig_idx)
+            bin_lengths[best_bin] += seq_len
+        else:
+            bins.append([orig_idx])
+            bin_lengths.append(seq_len)
+
+    plan: List[Tuple[int, int]] = []
+    for bin_indices in bins:
+        for orig_idx in bin_indices:
+            plan.append((orig_idx, min(len(sequences[orig_idx]), max_packed_len)))
+
+    return plan
 
 
 class Pipeline:
@@ -145,6 +204,25 @@ class Pipeline:
         for domain, keys in domains.items():
             idx = shard_idx[domain]
             chunk_dir = os.path.join(self.output_dir, domain)
+
+            pp = self.config.preprocessing
+            if pp.packing_strategy != "simple" and "sequence" in keys:
+                plan = pack_sequences(
+                    keys["sequence"],
+                    pp.max_packed_len,
+                    pp.packing_strategy,
+                    pp.truncation_mode,
+                )
+                reordered = defaultdict(list)
+                for orig_idx, truncated_len in plan:
+                    for k, vals in keys.items():
+                        reordered[k].append(
+                            _truncate(
+                                vals[orig_idx], pp.max_packed_len, pp.truncation_mode
+                            )
+                        )
+                keys = reordered
+
             tensors = {}
             for key, ids_list in keys.items():
                 dt = _STR_TO_DTYPE.get(
