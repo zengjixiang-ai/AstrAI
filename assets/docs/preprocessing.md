@@ -243,6 +243,9 @@ When `sources` is set, `sections` is ignored.
 | `min_chars` | int | `50` | Skip text-mode items shorter than this |
 | `max_chars` | int | `2000000` | Skip text-mode items longer than this |
 | `max_items` | int or null | `null` | Stop after N documents |
+| `packing_strategy` | str | `"simple"` | Packing strategy: `"simple"`, `"bfd"`, `"bfd_split"` |
+| `max_packed_len` | int | `8192` | Maximum length of a packed bin |
+| `truncation_mode` | str | `"keep_start"` | How to truncate sequences: `"keep_start"` or `"keep_end"` |
 
 ### `output`
 
@@ -252,6 +255,7 @@ When `sources` is set, `sections` is ignored.
 | `storage_format` | str | `"bin"` | `"bin"` (mmap) or `"h5"` |
 | `max_tokens_per_shard` | int | `100000000` | Flush threshold in cumulative tokens |
 | `dtype` | dict[str, str] | `{}` | Per-key tensor dtype override (e.g. `{"loss_mask": "bool"}`) |
+| `position_ids_mode` | str | `"none"` | How to compute position_ids: `"none"`, `"doc_reset"`, `"continuous"` |
 
 ---
 

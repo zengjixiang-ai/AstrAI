@@ -48,6 +48,27 @@
 | `--start_epoch` | Resume from epoch (0 = from scratch) | 0 |
 | `--start_batch` | Resume from batch iteration | 0 |
 
+### Validation
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `--val_split` | Ratio to split from training dataset for validation (e.g. 0.05) | None |
+| `--val_step` | Number of optimizer steps between validation runs | 1000 |
+
+### Logging
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `--log_dir` | Directory for metric logs | checkpoint/logs |
+| `--log_interval` | Number of batch iterations between metric logs | 100 |
+| `--metrics` | Metrics to log (e.g. --metrics loss lr val_loss) | ["loss", "lr"] |
+
+### Gradient Checkpointing
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `--gradient_checkpointing` | Enable activation checkpointing for DecoderBlock modules | False |
+
 ### Distributed Training
 
 | Parameter | Description | Default |
@@ -56,6 +77,9 @@
 | `--parallel_mode` | Parallel strategy (`none`, `ddp`, or `fsdp`) | none |
 | `--device_type` | Device type | cuda |
 | `--start_method` | Multiprocessing start method (`spawn`, `fork`, `forkserver`) | spawn |
+| `--backend` | Distributed training backend | nccl |
+| `--master_addr` | Master node address | localhost |
+| `--master_port` | Master node port | 29500 |
 
 ### Strategy-specific
 

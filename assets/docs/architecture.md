@@ -352,16 +352,11 @@ classDiagram
             +build(item, config, tokenizer) Optional[dict]
         }
 
-        class ChatMaskBuilder {
+        class SectionedMaskBuilder {
+            +SectionRenderer renderer
             +build(item, config, tokenizer) Optional[dict]
-        }
-
-        class InstructionMaskBuilder {
-            +build(item, config, tokenizer) Optional[dict]
-        }
-
-        class TextMaskBuilder {
-            +build(item, config, tokenizer) Optional[dict]
+            +_build_single(item, config, tokenizer) Optional[dict]
+            +_build_multi(item, sources_spec, config, tokenizer) Optional[dict]
         }
 
         class Pipeline {
@@ -370,8 +365,12 @@ classDiagram
             +str output_dir
             +str tokenizer_path
             +BaseMaskBuilder mask_builder
+            +PackingStrategy _packer
+            +PositionIdStrategy _position_id
+            +StoreWriter _writer
             +transform(item) Optional[dict]
             +run()
+            +_flush(domains, shard_idx)
         }
     }
 
@@ -841,7 +840,7 @@ classDiagram
 
         class ResponseBuilder {
             <<abstract>>
-            +prepare(request, tokenizer) Tuple[str, GenContext, List[str]]
+            +prepare(request, engine) Tuple[str, GenContext, List[str]]
             +format_stream_start(ctx) List[str]
             +format_chunk(token) str
             +format_stream_end(ctx, stop) List[str]
@@ -849,7 +848,7 @@ classDiagram
         }
 
         class OpenAIResponseBuilder {
-            +prepare(request, tokenizer) Tuple
+            +prepare(request, engine) Tuple
             +format_stream_start(ctx) List[str]
             +format_chunk(token) str
             +format_stream_end(ctx, stop) List[str]
@@ -857,7 +856,7 @@ classDiagram
         }
 
         class AnthropicResponseBuilder {
-            +prepare(request, tokenizer) Tuple
+            +prepare(request, engine) Tuple
             +format_stream_start(ctx) List[str]
             +format_chunk(token) str
             +format_stream_end(ctx, stop) List[str]
@@ -1034,7 +1033,6 @@ classDiagram
     BaseSamplingStrategy <|-- TemperatureStrategy
     BaseSamplingStrategy <|-- TopKStrategy
     BaseSamplingStrategy <|-- TopPStrategy
-    BaseSamplingStrategy <|-- SamplingPipeline
     ParallelModel <|-- RowParallelLinear
     ParallelModel <|-- ColumnParallelLinear
     AutoModel <|-- AutoRegressiveLM
@@ -1063,9 +1061,7 @@ classDiagram
     BaseExecutor <|-- FSDPExecutor
     ResponseBuilder <|-- OpenAIResponseBuilder
     ResponseBuilder <|-- AnthropicResponseBuilder
-    BaseMaskBuilder <|-- ChatMaskBuilder
-    BaseMaskBuilder <|-- InstructionMaskBuilder
-    BaseMaskBuilder <|-- TextMaskBuilder
+    BaseMaskBuilder <|-- SectionedMaskBuilder
 
     %% --- Composition (strong ownership, part destroyed with whole) ---
     KVCache *-- PagePool
@@ -1162,7 +1158,7 @@ classDiagram
 | Module | Components | Description |
 |--------|------------|-------------|
 | **astrai.config** | BaseConfig, BaseModelConfig, AutoRegressiveLMConfig, EncoderConfig, ConfigFactory, TrainConfig, PipelineConfig, InputConfig, ProcessingConfig, OutputConfig | Configuration management (to_dict/from_dict, to_file/from_file, from_json/to_json) |
-| **astrai.preprocessing** | BaseMaskBuilder, MaskBuilderFactory, ChatMaskBuilder, InstructionMaskBuilder, TextMaskBuilder, Pipeline, filter_by_length, dedup_signature | Declarative JSON-driven data preprocessing |
+| **astrai.preprocessing** | BaseMaskBuilder, MaskBuilderFactory, SectionedMaskBuilder, Pipeline, filter_by_length, PackingStrategy, PackingStrategyFactory, PositionIdStrategy, PositionIdStrategyFactory, StoreWriter, StoreWriterFactory | Declarative JSON-driven data preprocessing |
 | **astrai.dataset** | BaseDataset–GRPODataset, Store–MmapStore, StoreFactory, ResumableDistributedSampler, DatasetFactory | Dataset loading and management |
 | **astrai.serialization** | Checkpoint | Model serialization |
 | **astrai.model** | AutoModel, AutoRegressiveLM, EmbeddingEncoder, DecoderBlock, GQA, MLA, MLP, DeepSeekMoE, AttnFactory, FFNFactory, RMSNorm, Linear, RotaryEmbedding, Embedding | Neural network model |

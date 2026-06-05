@@ -201,7 +201,7 @@ curl http://localhost:8000/health
 Check out the demos in the `scripts/demo/` folder:
 
 ```bash
-# Download pre‑processed data (required before running demos)
+# Download model weights (required before running demos)
 python scripts/demo/download.py
 
 # Interactive streaming chat

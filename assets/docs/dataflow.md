@@ -26,7 +26,7 @@ H5 backend supports shared memory via `.share_memory_()`. Bin (mmap) uses OS pag
 | Type | Storage Keys |
 |------|-------------|
 | `seq` | `sequence` (→ input_ids, target_ids via offset-by-1) |
-| `sft` | `sequence`, `loss_mask` |
+| `sft` | `sequence`, `loss_mask`, `position_ids` |
 | `dpo` | `chosen`, `rejected`, `chosen_mask`, `rejected_mask` |
 | `grpo` | `prompts`, `responses`, `masks`, `rewards` |
 

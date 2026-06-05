@@ -207,7 +207,7 @@ curl http://localhost:8000/health
 查看 `scripts/demo/` 文件夹中的演示：
 
 ```bash
-# 下载预处理数据（运行演示前必需）
+# 下载模型权重（运行演示前必需）
 python scripts/demo/download.py
 
 # 交互式流式聊天
