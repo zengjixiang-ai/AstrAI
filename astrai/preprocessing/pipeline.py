@@ -1,21 +1,25 @@
 """Config-driven JSONL preprocessing pipeline.
 
 Composes a :class:`BaseMaskBuilder` (selected by ``input.type``) with
-sharding and flush to ``.h5`` / ``.bin`` storage.
+sharding and flush to ``.h5`` / ``.bin`` storage.  Packing, position-id
+generation and storage writing are each delegated to pluggable strategies,
+dispatched by configuration keys.
 """
 
 import json
 import os
 from collections import defaultdict
 from itertools import chain
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import torch
 import tqdm
 
 from astrai.config.preprocess_config import PipelineConfig
-from astrai.dataset.storage import save_bin, save_h5
-from astrai.preprocessing.builder import SectionedMaskBuilder
+from astrai.preprocessing.builder import MaskBuilderFactory
+from astrai.preprocessing.packing import PackingStrategyFactory
+from astrai.preprocessing.position_id import PositionIdStrategyFactory
+from astrai.preprocessing.writer import StoreWriterFactory
 from astrai.tokenize import AutoTokenizer
 
 _STR_TO_DTYPE: dict[str, torch.dtype] = {
@@ -33,65 +37,6 @@ _STR_TO_DTYPE: dict[str, torch.dtype] = {
 
 def filter_by_length(text: str, min_len: int = 50, max_len: int = 2_000_000) -> bool:
     return min_len <= len(text) <= max_len
-
-
-def _truncate(seq: list, max_len: int, mode: str) -> list:
-    if len(seq) <= max_len:
-        return seq
-    if mode == "keep_end":
-        return seq[-max_len:]
-    return seq[:max_len]
-
-
-def pack_sequences(
-    sequences: List[list],
-    max_packed_len: int,
-    strategy: str,
-    truncation_mode: str,
-) -> List[Tuple[int, int]]:
-    """Pack *sequences* into bins and return a reorder plan.
-
-    Returns a list of ``(orig_idx, truncated_length)`` in flush order.
-    All keys (sequence, loss_mask, …) must be reordered and truncated
-    identically according to this plan.
-
-    Supported *strategy* values:
-
-    - ``"simple"``: sequential, no reordering.
-    - ``"bfd"``: best-fit decreasing bin packing.
-    """
-    n = len(sequences)
-    if strategy == "simple":
-        return [(i, min(len(sequences[i]), max_packed_len)) for i in range(n)]
-
-    order = sorted(range(n), key=lambda i: len(sequences[i]), reverse=True)
-    bins: List[List[int]] = []
-    bin_lengths: List[int] = []
-
-    for orig_idx in order:
-        seq_len = min(len(sequences[orig_idx]), max_packed_len)
-
-        best_bin = None
-        best_remain = max_packed_len + 1
-        for i, bl in enumerate(bin_lengths):
-            remain = max_packed_len - bl
-            if seq_len <= remain < best_remain:
-                best_remain = remain
-                best_bin = i
-
-        if best_bin is not None:
-            bins[best_bin].append(orig_idx)
-            bin_lengths[best_bin] += seq_len
-        else:
-            bins.append([orig_idx])
-            bin_lengths.append(seq_len)
-
-    plan: List[Tuple[int, int]] = []
-    for bin_indices in bins:
-        for orig_idx in bin_indices:
-            plan.append((orig_idx, min(len(sequences[orig_idx]), max_packed_len)))
-
-    return plan
 
 
 class Pipeline:
@@ -116,7 +61,14 @@ class Pipeline:
         self.output_dir = output_dir
         self.tokenizer_path = tokenizer_path
 
-        self.mask_builder = SectionedMaskBuilder()
+        self.mask_builder = MaskBuilderFactory.create("sectioned")
+        self._packer = PackingStrategyFactory.create(
+            config.preprocessing.packing_strategy
+        )
+        self._position_id = PositionIdStrategyFactory.create(
+            config.output.position_ids_mode
+        )
+        self._writer = StoreWriterFactory.create(config.output.storage_format)
 
     def transform(self, item: dict) -> Optional[dict]:
         return self.mask_builder.build(item, self.config, self._tokenizer)
@@ -168,8 +120,6 @@ class Pipeline:
         if total_tokens > 0:
             self._flush(domains, shard_idx)
 
-        print(f"Done. {count} documents tokenized.")
-
     @staticmethod
     def _primary_ids(result: dict) -> list:
         """Return the first list-valued entry in *result* as the primary id
@@ -203,27 +153,11 @@ class Pipeline:
     def _flush(self, domains, shard_idx):
         for domain, keys in domains.items():
             idx = shard_idx[domain]
-            chunk_dir = os.path.join(self.output_dir, domain)
 
             pp = self.config.preprocessing
-            if pp.packing_strategy != "simple" and "sequence" in keys:
-                plan = pack_sequences(
-                    keys["sequence"],
-                    pp.max_packed_len,
-                    pp.packing_strategy,
-                    pp.truncation_mode,
-                )
-                reordered = defaultdict(list)
-                for orig_idx, truncated_len in plan:
-                    for k, vals in keys.items():
-                        reordered[k].append(
-                            _truncate(
-                                vals[orig_idx], pp.max_packed_len, pp.truncation_mode
-                            )
-                        )
-                keys = reordered
+            keys = self._packer.apply(dict(keys), pp.max_packed_len, pp.truncation_mode)
 
-            tensors = {}
+            tensors: Dict[str, List[torch.Tensor]] = {}
             for key, ids_list in keys.items():
                 dt = _STR_TO_DTYPE.get(
                     self.config.output.dtype.get(key, "int32"), torch.int32
@@ -232,24 +166,13 @@ class Pipeline:
                     torch.tensor(list(chain.from_iterable(ids_list)), dtype=dt)
                 ]
 
-            pid_mode = self.config.output.position_ids_mode
-            if pid_mode and pid_mode != "none" and "sequence" in tensors:
-                pos_ids = []
-                if pid_mode == "doc_reset":
-                    for item in keys["sequence"]:
-                        pos_ids.extend(range(len(item)))
-                else:
-                    total = sum(len(item) for item in keys["sequence"])
-                    pos_ids = list(range(total))
+            pos_ids = self._position_id.generate(keys.get("sequence", []))
+            if pos_ids:
                 tensors["position_ids"] = [torch.tensor(pos_ids, dtype=torch.int32)]
 
-            shard_path = os.path.join(chunk_dir, f"shard_{idx:04d}")
-            fmt = self.config.output.storage_format
-            if fmt == "bin":
-                save_bin(shard_path, tensors)
-            else:
-                save_h5(chunk_dir, f"data_{idx:04d}", tensors)
+            self._writer.save(self.output_dir, domain, idx, tensors)
             shard_idx[domain] = idx + 1
+
             first_key = "sequence" if "sequence" in tensors else next(iter(tensors))
             tqdm.tqdm.write(
                 f"  saved {domain}/shard_{idx:04d}  "
