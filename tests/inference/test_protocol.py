@@ -121,8 +121,8 @@ class TestOpenAIResponseBuilder:
         assert p["choices"][0]["finish_reason"] is None
 
     def test_format_chunk(self, builder):
-        event = builder.format_chunk("hello")
-        payload = json.loads(event.split("data: ", 1)[1])
+        events = builder.format_chunk("hello", "hello")
+        payload = json.loads(events[0].split("data: ", 1)[1])
         assert payload["choices"][0]["delta"]["content"] == "hello"
         assert payload["choices"][0]["finish_reason"] is None
 
@@ -192,8 +192,8 @@ class TestAnthropicResponseBuilder:
         assert payloads[1]["type"] == "content_block_start"
 
     def test_format_chunk(self, builder):
-        event = builder.format_chunk("tok")
-        payload = json.loads(event.split("data: ", 1)[1])
+        events = builder.format_chunk("tok", "tok")
+        payload = json.loads(events[0].split("data: ", 1)[1])
         assert payload["type"] == "content_block_delta"
         assert payload["delta"]["text"] == "tok"
 

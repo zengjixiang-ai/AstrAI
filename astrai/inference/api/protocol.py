@@ -78,8 +78,13 @@ class ResponseBuilder(ABC):
         """SSE events that open the stream."""
 
     @abstractmethod
-    def format_chunk(self, token: str) -> str:
-        """SSE event for a single generated token."""
+    def format_chunk(self, token: str, body: str) -> List[str]:
+        """SSE events for a single generated token.
+
+        Receives the current token and the full accumulated *body* so
+        that tool-call parsers can re-parse the complete text each step.
+        Returns a list of SSE event strings (may be empty).
+        """
 
     @abstractmethod
     def format_stream_end(self, ctx: GenContext, stop: StopInfo) -> List[str]:
@@ -145,7 +150,8 @@ class ProtocolHandler:
                     break
 
                 ctx.completion_tokens += 1
-                yield self.builder.format_chunk(token)
+                for event in self.builder.format_chunk(token, body):
+                    yield event
                 yielded += token
 
             stop = StopInfo(matched=matched, body=body, yielded=yielded)

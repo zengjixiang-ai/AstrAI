@@ -73,15 +73,17 @@ class AnthropicResponseBuilder(ResponseBuilder):
             ),
         ]
 
-    def format_chunk(self, token: str) -> str:
-        return sse_event(
-            {
-                "type": "content_block_delta",
-                "index": 0,
-                "delta": {"type": "text_delta", "text": token},
-            },
-            event="content_block_delta",
-        )
+    def format_chunk(self, token: str, body: str) -> List[str]:
+        return [
+            sse_event(
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": token},
+                },
+                event="content_block_delta",
+            )
+        ]
 
     def format_stream_end(self, ctx: GenContext, stop: StopInfo) -> List[str]:
         events: List[str] = []

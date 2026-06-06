@@ -32,7 +32,20 @@ _app_instance: Optional[FastAPI] = None
 
 class ChatMessage(BaseModel):
     role: str
-    content: str
+    content: Optional[str] = None
+    tool_calls: Optional[List[Dict[str, Any]]] = None
+    tool_call_id: Optional[str] = None
+
+
+class FunctionDef(BaseModel):
+    name: str
+    description: Optional[str] = None
+    parameters: Optional[Dict[str, Any]] = None
+
+
+class ToolDef(BaseModel):
+    type: str = "function"
+    function: FunctionDef
 
 
 class ChatCompletionRequest(BaseModel):
@@ -51,6 +64,8 @@ class ChatCompletionRequest(BaseModel):
     frequency_penalty: Optional[float] = Field(default=0.0, ge=-2.0, le=2.0)
     logit_bias: Optional[Dict[int, float]] = None
     user: Optional[str] = None
+    tools: Optional[List[ToolDef]] = None
+    tool_choice: Optional[Union[str, Dict[str, Any]]] = "auto"
 
 
 class AnthropicMessage(BaseModel):
