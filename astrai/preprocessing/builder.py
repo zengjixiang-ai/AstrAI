@@ -209,12 +209,7 @@ class BaseMaskBuilder(ABC):
 
 
 class MaskBuilderFactory(BaseFactory["BaseMaskBuilder"]):
-    @classmethod
-    def _validate_component(cls, component_cls: type):
-        if not issubclass(component_cls, BaseMaskBuilder):
-            raise TypeError(
-                f"{component_cls.__name__} must inherit from BaseMaskBuilder"
-            )
+    pass
 
 
 @MaskBuilderFactory.register("sectioned")

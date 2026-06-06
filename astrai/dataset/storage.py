@@ -222,11 +222,6 @@ class StoreFactory(BaseFactory["Store"]):
             ...
     """
 
-    @classmethod
-    def _validate_component(cls, store_cls: type):
-        if not issubclass(store_cls, Store):
-            raise TypeError(f"{store_cls.__name__} must inherit from Store")
-
 
 @StoreFactory.register("h5")
 class H5Store(Store):

@@ -20,12 +20,7 @@ class PositionIdStrategy(ABC):
 
 
 class PositionIdStrategyFactory(BaseFactory["PositionIdStrategy"]):
-    @classmethod
-    def _validate_component(cls, component_cls: type):
-        if not issubclass(component_cls, PositionIdStrategy):
-            raise TypeError(
-                f"{component_cls.__name__} must inherit from PositionIdStrategy"
-            )
+    pass
 
 
 @PositionIdStrategyFactory.register("none")

@@ -33,12 +33,7 @@ class PackingStrategy(ABC):
 
 
 class PackingStrategyFactory(BaseFactory["PackingStrategy"]):
-    @classmethod
-    def _validate_component(cls, component_cls: type):
-        if not issubclass(component_cls, PackingStrategy):
-            raise TypeError(
-                f"{component_cls.__name__} must inherit from PackingStrategy"
-            )
+    pass
 
 
 @PackingStrategyFactory.register("simple")

@@ -137,12 +137,6 @@ class DatasetFactory(BaseFactory["BaseDataset"]):
     """
 
     @classmethod
-    def _validate_component(cls, dataset_cls: type):
-        """Validate that the dataset class inherits from BaseDataset."""
-        if not issubclass(dataset_cls, BaseDataset):
-            raise TypeError(f"{dataset_cls.__name__} must inherit from BaseDataset")
-
-    @classmethod
     def create(cls, train_type: str, window_size: int, stride: int) -> "BaseDataset":
         """Create a dataset instance.
 
@@ -195,9 +189,6 @@ class DatasetFactory(BaseFactory["BaseDataset"]):
 class SEQDataset(BaseDataset):
     """Dataset for sequential next-token prediction training."""
 
-    def __init__(self, window_size: int, stride: int):
-        super().__init__(window_size, stride)
-
     @property
     def required_keys(self) -> List[str]:
         return ["sequence"]
@@ -217,9 +208,6 @@ class SEQDataset(BaseDataset):
 @DatasetFactory.register("sft")
 class SFTDataset(BaseDataset):
     """Dataset for supervised fine-tuning with loss masking."""
-
-    def __init__(self, window_size: int, stride: int):
-        super().__init__(window_size, stride)
 
     @property
     def required_keys(self) -> List[str]:
@@ -247,9 +235,6 @@ class SFTDataset(BaseDataset):
 @DatasetFactory.register("dpo")
 class DPODataset(BaseDataset):
     """Dataset for Direct Preference Optimization training."""
-
-    def __init__(self, window_size: int, stride: int):
-        super().__init__(window_size, stride)
 
     @property
     def required_keys(self) -> List[str]:
@@ -281,9 +266,6 @@ class DPODataset(BaseDataset):
 @DatasetFactory.register("grpo")
 class GRPODataset(BaseDataset):
     """Dataset for Group Relative Policy Optimization training."""
-
-    def __init__(self, window_size: int, stride: int):
-        super().__init__(window_size, stride)
 
     @property
     def required_keys(self) -> List[str]:

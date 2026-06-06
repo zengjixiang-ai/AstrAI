@@ -2,7 +2,7 @@
 
 import math
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Type
+from typing import Any, Dict, List
 
 from torch.optim.lr_scheduler import LRScheduler
 
@@ -40,12 +40,6 @@ class SchedulerFactory(BaseFactory["BaseScheduler"]):
 
         scheduler = SchedulerFactory.create("custom", optimizer, **kwargs)
     """
-
-    @classmethod
-    def _validate_component(cls, scheduler_cls: Type[BaseScheduler]):
-        """Validate that the scheduler class inherits from BaseScheduler."""
-        if not issubclass(scheduler_cls, BaseScheduler):
-            raise TypeError(f"{scheduler_cls.__name__} must inherit from BaseScheduler")
 
     @classmethod
     def create(

@@ -30,10 +30,7 @@ class StoreWriter(ABC):
 
 
 class StoreWriterFactory(BaseFactory["StoreWriter"]):
-    @classmethod
-    def _validate_component(cls, component_cls: type):
-        if not issubclass(component_cls, StoreWriter):
-            raise TypeError(f"{component_cls.__name__} must inherit from StoreWriter")
+    pass
 
 
 @StoreWriterFactory.register("bin")

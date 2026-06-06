@@ -291,7 +291,7 @@ def test_sectioned_text_too_short(test_tokenizer):
 
 
 def test_factory_registered():
-    names = MaskBuilderFactory._registry.list_names()
+    names = MaskBuilderFactory.list_registered()
     assert "sectioned" in names
 
 

@@ -75,12 +75,7 @@ class BaseToolParser(ABC):
 
 
 class ToolParserFactory(BaseFactory["BaseToolParser"]):
-    @classmethod
-    def _validate_component(cls, component_cls: type):
-        if not issubclass(component_cls, BaseToolParser):
-            raise TypeError(
-                f"{component_cls.__name__} must inherit from BaseToolParser"
-            )
+    pass
 
 
 _TOOL_CALL_HEAD_RE = re.compile(r'\{\s*"name"\s*:')
