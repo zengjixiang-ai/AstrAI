@@ -172,8 +172,8 @@ class TrainContextBuilder:
                         obj.load_state_dict(extra[name])
 
         context.strategy = StrategyFactory.create(
+            cfg.strategy,
             model=context.model,
-            train_type=cfg.strategy,
             device=device,
             executor=executor,
             model_fn=cfg.model_fn,

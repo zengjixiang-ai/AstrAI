@@ -8,9 +8,7 @@ from astrai.model.components.linear import Linear
 
 
 class FFNFactory(BaseFactory[nn.Module]):
-    @classmethod
-    def create(cls, ffn_type: str, dim: int, dim_ffn: int, **kwargs) -> nn.Module:
-        return super().create(ffn_type, dim, dim_ffn, **kwargs)
+    pass
 
 
 @FFNFactory.register("mlp")

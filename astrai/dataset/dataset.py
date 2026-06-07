@@ -137,20 +137,6 @@ class DatasetFactory(BaseFactory["BaseDataset"]):
     """
 
     @classmethod
-    def create(cls, train_type: str, window_size: int, stride: int) -> "BaseDataset":
-        """Create a dataset instance.
-
-        Args:
-            train_type: Type of training ("seq", "sft", "dpo", "grpo")
-            window_size: Window size for data sampling
-            stride: Stride between consecutive samples
-
-        Returns:
-            Dataset instance
-        """
-        return super().create(train_type, window_size, stride)
-
-    @classmethod
     def load(
         cls,
         train_type: str,
@@ -178,11 +164,6 @@ class DatasetFactory(BaseFactory["BaseDataset"]):
         dataset.load(load_path, storage_type=storage_type)
 
         return dataset
-
-    @classmethod
-    def available_types(cls) -> list:
-        """Return list of registered dataset type names."""
-        return cls.list_registered()
 
 
 @DatasetFactory.register("seq")

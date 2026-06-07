@@ -31,7 +31,6 @@ class SchedulerFactory(BaseFactory["BaseScheduler"]):
     """Factory class for creating learning rate schedulers.
 
     Supports decorator-based registration for extensible scheduler types.
-    Also supports creation from ScheduleConfig objects.
 
     Example usage:
         @SchedulerFactory.register("custom")
@@ -40,27 +39,6 @@ class SchedulerFactory(BaseFactory["BaseScheduler"]):
 
         scheduler = SchedulerFactory.create("custom", optimizer, **kwargs)
     """
-
-    @classmethod
-    def create(
-        cls, optimizer, schedule_type: str = "none", **kwargs
-    ) -> "BaseScheduler":
-        """Create a scheduler instance by type name.
-
-        Args:
-            optimizer: PyTorch optimizer
-            schedule_type: Type of scheduler ("cosine", "sgdr")
-            **kwargs: Arguments passed to the scheduler constructor
-
-        Returns:
-            Scheduler instance
-        """
-        return super().create(schedule_type, optimizer, **kwargs)
-
-    @classmethod
-    def available_types(cls) -> list:
-        """Return list of registered scheduler type names."""
-        return cls.list_registered()
 
 
 # ----------- Scheduler implementations -----------

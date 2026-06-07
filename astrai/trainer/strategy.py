@@ -127,26 +127,6 @@ class StrategyFactory(BaseFactory["BaseStrategy"]):
         strategy = StrategyFactory.create("custom", model, device)
     """
 
-    @classmethod
-    def create(cls, train_type: str, model, device: str, **kwargs) -> "BaseStrategy":
-        """Create a strategy instance based on training type.
-
-        Args:
-            train_type: Type of training ("seq", "sft", "dpo", "grpo")
-            model: Model instance for the strategy
-            device: Device to run the strategy on
-            **kwargs: Additional arguments passed to strategy constructor
-
-        Returns:
-            Strategy instance
-        """
-        return super().create(train_type, model, device, **kwargs)
-
-    @classmethod
-    def available_strategies(cls) -> list:
-        """Return list of registered strategy names."""
-        return cls.list_registered()
-
 
 # ============== Strategy Classes ==============
 # All strategies are registered at class definition time using the decorator

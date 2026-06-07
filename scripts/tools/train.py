@@ -231,7 +231,8 @@ def create_optimizer(model, **kwargs) -> optim.Optimizer:
 def create_scheduler(
     optimizer: optim.Optimizer, **kwargs
 ) -> optim.lr_scheduler.LRScheduler:
-    return SchedulerFactory.create(optimizer, **kwargs)
+    schedule_type = kwargs.pop("schedule_type")
+    return SchedulerFactory.create(schedule_type, optimizer, **kwargs)
 
 
 def compute_total_steps(

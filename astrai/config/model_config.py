@@ -1,6 +1,5 @@
-import json
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Self
+from typing import Any, Dict, Optional
 
 from astrai.config.base import BaseConfig
 from astrai.factory import BaseFactory
@@ -21,18 +20,6 @@ class BaseModelConfig(BaseConfig):
     """Base config with ``model_type`` dispatch and file I/O."""
 
     model_type: Optional[str] = None
-
-    @classmethod
-    def from_file(cls, config_path: str) -> Self:
-        with open(config_path, "r") as f:
-            raw: Dict[str, Any] = json.load(f)
-        return cls.from_dict(raw)
-
-    def to_file(self, config_path: str):
-        d = self.to_dict()
-        config_dict = {k: v for k, v in d.items() if v is not None}
-        with open(config_path, "w") as f:
-            json.dump(config_dict, f, indent=4)
 
 
 @dataclass

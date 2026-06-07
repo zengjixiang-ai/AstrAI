@@ -89,10 +89,10 @@ class BaseConfig:
         raise TypeError
 
     @classmethod
-    def from_json(cls, path: Union[str, Path]) -> Self:
+    def from_file(cls, path: Union[str, Path]) -> Self:
         with open(path, "r", encoding="utf-8") as f:
             return cls.from_dict(json.load(f))
 
-    def to_json(self, path: Union[str, Path]):
+    def to_file(self, path: Union[str, Path]):
         with open(path, "w", encoding="utf-8") as f:
             json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)

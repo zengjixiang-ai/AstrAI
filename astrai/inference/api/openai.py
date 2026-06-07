@@ -86,7 +86,6 @@ class OpenAIResponseBuilder(ResponseBuilder):
             resp_id=self._resp_id,
             created=int(time.time()),
             model=self._model,
-            prompt_tokens=0,
         )
         stop = request.stop
         stop_sequences = (

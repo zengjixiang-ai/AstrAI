@@ -42,7 +42,6 @@ class AnthropicResponseBuilder(ResponseBuilder):
             resp_id=f"msg_{uuid.uuid4().hex[:24]}",
             created=int(time.time()),
             model=request.model,
-            prompt_tokens=0,
         )
         stop_sequences = getattr(request, "stop_sequences", None) or []
         return prompt, ctx, stop_sequences

@@ -24,7 +24,7 @@ def main():
     )
     args = parser.parse_args()
 
-    config = PipelineConfig.from_json(args.config)
+    config = PipelineConfig.from_file(args.config)
 
     Pipeline(
         config=config,

@@ -36,8 +36,8 @@ def test_schedule_factory_random_configs():
                 min_rate = params["min_rate"]
                 lr_decay_steps = total_steps - warmup_steps
                 scheduler = SchedulerFactory.create(
-                    optimizer,
                     schedule_type,
+                    optimizer,
                     warmup_steps=warmup_steps,
                     lr_decay_steps=lr_decay_steps,
                     min_rate=min_rate,
@@ -52,8 +52,8 @@ def test_schedule_factory_random_configs():
                 t_mult = params["t_mult"]
                 min_rate = params["min_rate"]
                 scheduler = SchedulerFactory.create(
-                    optimizer,
                     schedule_type,
+                    optimizer,
                     warmup_steps=warmup_steps,
                     cycle_length=cycle_length,
                     t_mult=t_mult,
@@ -103,8 +103,8 @@ def test_schedule_factory_edge_cases():
         min_rate = params["min_rate"]
         lr_decay_steps = total_steps - warmup_steps
         scheduler = SchedulerFactory.create(
-            optimizer,
             "cosine",
+            optimizer,
             warmup_steps=warmup_steps,
             lr_decay_steps=lr_decay_steps,
             min_rate=min_rate,
@@ -129,8 +129,8 @@ def test_schedule_factory_state_persistence():
     min_rate = 0.1
     lr_decay_steps = total_steps - warmup_steps
     scheduler = SchedulerFactory.create(
-        optimizer,
         "cosine",
+        optimizer,
         warmup_steps=warmup_steps,
         lr_decay_steps=lr_decay_steps,
         min_rate=min_rate,
@@ -146,8 +146,8 @@ def test_schedule_factory_state_persistence():
 
     # Create new scheduler with same parameters
     new_scheduler = SchedulerFactory.create(
-        optimizer,
         "cosine",
+        optimizer,
         warmup_steps=warmup_steps,
         lr_decay_steps=lr_decay_steps,
         min_rate=min_rate,

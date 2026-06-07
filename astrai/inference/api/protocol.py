@@ -35,7 +35,7 @@ class GenContext:
     resp_id: str
     created: int
     model: str
-    prompt_tokens: int
+    prompt_tokens: int = 0
     completion_tokens: int = 0
 
 

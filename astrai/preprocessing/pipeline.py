@@ -44,7 +44,7 @@ class Pipeline:
 
     Usage::
 
-        config = PipelineConfig.from_json("sft_pipeline.json")
+        config = PipelineConfig.from_file("sft_pipeline.json")
         Pipeline(config, ["data.jsonl"], output_dir="out", tokenizer_path="params").run()
     """
 

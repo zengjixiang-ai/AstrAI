@@ -65,7 +65,7 @@ def create_train_config(
 
     def scheduler_fn(optim):
         return SchedulerFactory.create(
-            optim, "cosine", warmup_steps=10, lr_decay_steps=10, min_rate=0.05
+            "cosine", optim, warmup_steps=10, lr_decay_steps=10, min_rate=0.05
         )
 
     return TrainConfig(

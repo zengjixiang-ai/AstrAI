@@ -53,15 +53,15 @@ def test_to_dict_roundtrip():
     assert config2.mask == {"prompt": "mask", "response": "train"}
 
 
-def test_to_json_from_json(temp_dir):
+def test_to_file_from_file(temp_dir):
     config = PipelineConfig(
         input=InputConfig(sections=_TEXT_SECTIONS),
         mask={"text": "train"},
         mask_default="mask",
     )
     path = os.path.join(temp_dir, "config.json")
-    config.to_json(path)
-    loaded = PipelineConfig.from_json(path)
+    config.to_file(path)
+    loaded = PipelineConfig.from_file(path)
     assert loaded.input.sections == _TEXT_SECTIONS
     assert loaded.mask == {"text": "train"}
 
@@ -69,8 +69,8 @@ def test_to_json_from_json(temp_dir):
 def test_dpo_config_roundtrip(temp_dir):
     config = make_dpo_chat_config()
     path = os.path.join(temp_dir, "config.json")
-    config.to_json(path)
-    loaded = PipelineConfig.from_json(path)
+    config.to_file(path)
+    loaded = PipelineConfig.from_file(path)
     assert loaded.input.sources is not None
     assert "chosen" in loaded.input.sources
     assert "rejected" in loaded.input.sources

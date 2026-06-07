@@ -16,7 +16,7 @@ def test_early_stopping_simulation(base_test_env, early_stopping_dataset):
 
     def scheduler_fn(optim):
         return SchedulerFactory.create(
-            optim, "cosine", warmup_steps=10, lr_decay_steps=10, min_rate=0.05
+            "cosine", optim, warmup_steps=10, lr_decay_steps=10, min_rate=0.05
         )
 
     train_config = TrainConfig(

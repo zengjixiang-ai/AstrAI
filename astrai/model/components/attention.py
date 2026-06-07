@@ -24,9 +24,7 @@ def repeat_kv(x: Tensor, n_rep: int) -> Tensor:
 
 
 class AttnFactory(BaseFactory[nn.Module]):
-    @classmethod
-    def create(cls, attn_type: str, **kwargs) -> nn.Module:
-        return super().create(attn_type, **kwargs)
+    pass
 
 
 @AttnFactory.register("gqa")
