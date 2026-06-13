@@ -213,7 +213,7 @@ class ProgressBarCallback(TrainCallback):
             "loss": f"{context.loss:.4f}",
             "lr": f"{context.optimizer.param_groups[-1]['lr']:.2e}",
         }
-        if context.val_loss > 0:
+        if context.val_loss is not None:
             postfix["val_loss"] = f"{context.val_loss:.4f}"
         self.progress_bar.set_postfix(postfix)
         self.progress_bar.update(1)
@@ -257,12 +257,16 @@ class MetricLoggerCallback(TrainCallback):
         }
 
     def _get_log_data(self, context: TrainContext):
-        return {
+        data = {
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "epoch": context.epoch,
             "iter": context.iteration,
-            **{m: self._metric_funcs[m](context) for m in self.metrics},
         }
+        for m in self.metrics:
+            val = self._metric_funcs[m](context)
+            if val is not None:
+                data[m] = val
+        return data
 
     @only_on_rank(0)
     def _add_log(self, log_data):

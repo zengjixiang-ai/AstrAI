@@ -31,8 +31,8 @@ class TrainContext:
     epoch: int = field(default=0)
     iteration: int = field(default=0)
     loss: float = field(default=0.0)
-    val_dataloader: DataLoader = field(default=None)
-    val_loss: float = field(default=0.0)
+    val_dataloader: Optional[DataLoader] = field(default=None)
+    val_loss: Optional[float] = field(default=None)
 
     world_size: int = field(default=1)
     rank: int = field(default=0)
