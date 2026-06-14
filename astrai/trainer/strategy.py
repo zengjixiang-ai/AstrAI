@@ -1,7 +1,7 @@
 """Training strategy implementations with factory pattern."""
 
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, Union
+from typing import Callable, Dict, Union
 
 import torch
 import torch.nn as nn
@@ -11,7 +11,9 @@ from torch import Tensor
 from astrai.factory import BaseFactory
 
 
-def create_ref_model(model_fn, state_dict: dict) -> nn.Module:
+def create_ref_model(
+    model_fn: Callable[[], nn.Module], state_dict: Dict[str, Tensor]
+) -> nn.Module:
     """Create a frozen reference model from model_fn + full state dict."""
     ref_model = model_fn()
     ref_model.load_state_dict(state_dict)
@@ -20,7 +22,7 @@ def create_ref_model(model_fn, state_dict: dict) -> nn.Module:
     return ref_model
 
 
-def move_to_device(batch: Dict[str, Tensor], device: str) -> Any:
+def move_to_device(batch: Dict[str, Tensor], device: str) -> Dict[str, Tensor]:
     """Move batch tensors to specified device with non-blocking transfer."""
     return {key: value.to(device, non_blocking=True) for key, value in batch.items()}
 
@@ -30,7 +32,7 @@ def get_logprobs(
     input_ids: Tensor,
     mask: Tensor,
     reduction: str,
-):
+) -> Tensor:
     """Compute token-wise log probabilities from model outputs.
 
     Args:
@@ -88,7 +90,10 @@ class BaseStrategy(ABC):
     """Abstract base class for training strategies."""
 
     def __init__(
-        self, model: Union[Callable[..., Dict[str, Tensor]]], device: str, **kwargs
+        self,
+        model: Union[nn.Module, Callable[..., Dict[str, Tensor]]],
+        device: str,
+        **kwargs,
     ):
         self.model = model
         self.device = device
@@ -139,7 +144,13 @@ class SEQStrategy(BaseStrategy):
     Computes cross-entropy loss for next token prediction.
     """
 
-    def __init__(self, model, device, label_smoothing: float = 0.0, **kwargs):
+    def __init__(
+        self,
+        model: Union[nn.Module, Callable[..., Dict[str, Tensor]]],
+        device: str,
+        label_smoothing: float = 0.0,
+        **kwargs,
+    ):
         super().__init__(model, device, **kwargs)
         self.label_smoothing = label_smoothing
 
@@ -164,7 +175,13 @@ class SFTStrategy(BaseStrategy):
     Applies cross-entropy loss only to tokens where loss_mask is True.
     """
 
-    def __init__(self, model, device, label_smoothing: float = 0.0, **kwargs):
+    def __init__(
+        self,
+        model: Union[nn.Module, Callable[..., Dict[str, Tensor]]],
+        device: str,
+        label_smoothing: float = 0.0,
+        **kwargs,
+    ):
         super().__init__(model, device, **kwargs)
         self.label_smoothing = label_smoothing
 

@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field, fields
-from typing import Callable, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import torch.nn as nn
 from torch.optim import Optimizer
@@ -40,7 +40,7 @@ class TrainConfig(BaseConfig):
     max_grad_norm: float = field(
         default=1.0, metadata={"help": "Maximum gradient norm."}
     )
-    gradient_checkpointing_modules: list = field(
+    gradient_checkpointing_modules: List[str] = field(
         default_factory=list,
         metadata={"help": "Module types to enable activation checkpointing for."},
     )
@@ -133,11 +133,11 @@ class TrainConfig(BaseConfig):
         metadata={"help": "NEFTune noise alpha (0=disabled, typical: 5.0)."},
     )
 
-    executor_kwargs: dict = field(
+    executor_kwargs: Dict[str, Any] = field(
         default_factory=dict,
         metadata={"help": "Extra kwargs passed to ExecutorFactory.create()."},
     )
-    extra_kwargs: dict = field(
+    extra_kwargs: Dict[str, Any] = field(
         default_factory=dict, metadata={"help": "Other arguments."}
     )
 

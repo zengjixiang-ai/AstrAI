@@ -154,11 +154,13 @@ class CheckpointCallback(TrainCallback):
                 self.save_dir, f"epoch_{context.epoch}_iter_{context.iteration}"
             )
             extra = self.save_extra_fn(context)
+            meta = context.config.to_dict()
             context.checkpoint = Checkpoint(
                 state_dict=state_dict,
                 epoch=context.epoch,
                 iteration=context.iteration,
                 extra=extra,
+                meta=meta,
                 config=context.model_config,
             )
             context.checkpoint.save(save_path)

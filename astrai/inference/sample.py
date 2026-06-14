@@ -29,6 +29,7 @@ class BaseSamplingStrategy(ABC):
         Returns:
             Transformed logits tensor.
         """
+        raise NotImplementedError
 
 
 class TemperatureStrategy(BaseSamplingStrategy):
@@ -41,7 +42,7 @@ class TemperatureStrategy(BaseSamplingStrategy):
     def __init__(self, temperature: Union[float, Tensor] = 1.0):
         self.temperature = temperature
 
-    def apply(self, logits, filter_value=-float("inf")):
+    def apply(self, logits: Tensor, filter_value: float = -float("inf")) -> Tensor:
         t = self.temperature
         if isinstance(t, Tensor):
             t = t.to(logits.device, non_blocking=True).view(-1, 1)
@@ -63,7 +64,7 @@ class TopKStrategy(BaseSamplingStrategy):
     def __init__(self, top_k: Union[int, Tensor] = 0):
         self.top_k = top_k
 
-    def apply(self, logits, filter_value=-float("inf")):
+    def apply(self, logits: Tensor, filter_value: float = -float("inf")) -> Tensor:
         tk = self.top_k
         if isinstance(tk, Tensor):
             tk = tk.to(logits.device, non_blocking=True).long().clamp(min=0)
@@ -100,7 +101,9 @@ class TopPStrategy(BaseSamplingStrategy):
     def __init__(self, top_p: Union[float, Tensor] = 1.0):
         self.top_p = top_p
 
-    def _apply(self, logits, top_p, filter_value):
+    def _apply(
+        self, logits: Tensor, top_p: Union[float, Tensor], filter_value: float
+    ) -> Tensor:
         sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
         cum_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
         remove = cum_probs > top_p
@@ -111,7 +114,7 @@ class TopPStrategy(BaseSamplingStrategy):
         logits[mask] = filter_value
         return logits
 
-    def apply(self, logits, filter_value=-float("inf")):
+    def apply(self, logits: Tensor, filter_value: float = -float("inf")) -> Tensor:
         tp = self.top_p
         if isinstance(tp, Tensor):
             tp = tp.to(logits.device, non_blocking=True)
@@ -142,7 +145,7 @@ class SamplingPipeline(BaseSamplingStrategy):
     def __init__(self, strategies: List[BaseSamplingStrategy]):
         self.strategies = strategies
 
-    def apply(self, logits, filter_value=-float("inf")):
+    def apply(self, logits: Tensor, filter_value: float = -float("inf")) -> Tensor:
         for strategy in self.strategies:
             logits = strategy.apply(logits, filter_value)
         return logits

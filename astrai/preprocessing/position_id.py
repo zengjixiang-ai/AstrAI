@@ -16,7 +16,8 @@ class PositionIdStrategy(ABC):
     """Generate ``position_ids`` for packed sequences."""
 
     @abstractmethod
-    def generate(self, sequences: List[list]) -> List[int]: ...
+    def generate(self, sequences: List[List[int]]) -> List[int]:
+        raise NotImplementedError
 
 
 class PositionIdStrategyFactory(BaseFactory["PositionIdStrategy"]):
@@ -25,13 +26,13 @@ class PositionIdStrategyFactory(BaseFactory["PositionIdStrategy"]):
 
 @PositionIdStrategyFactory.register("none")
 class NoPositionId(PositionIdStrategy):
-    def generate(self, sequences):
+    def generate(self, sequences: List[List[int]]) -> List[int]:
         return []
 
 
 @PositionIdStrategyFactory.register("doc_reset")
 class DocResetPositionId(PositionIdStrategy):
-    def generate(self, sequences):
+    def generate(self, sequences: List[List[int]]) -> List[int]:
         pos_ids = []
         for seq in sequences:
             pos_ids.extend(range(len(seq)))
@@ -40,6 +41,6 @@ class DocResetPositionId(PositionIdStrategy):
 
 @PositionIdStrategyFactory.register("continuous")
 class ContinuousPositionId(PositionIdStrategy):
-    def generate(self, sequences):
+    def generate(self, sequences: List[List[int]]) -> List[int]:
         total = sum(len(seq) for seq in sequences)
         return list(range(total))

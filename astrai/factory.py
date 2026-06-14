@@ -4,12 +4,16 @@ import inspect
 import sys
 from abc import ABC
 from typing import (
+    Any,
     Callable,
     Dict,
     ForwardRef,
     Generic,
+    List,
+    Optional,
     Type,
     TypeVar,
+    Union,
 )
 from typing import get_args as _get_args
 from typing import get_origin as _get_origin
@@ -17,7 +21,9 @@ from typing import get_origin as _get_origin
 T = TypeVar("T")
 
 
-def _resolve_type(arg, factory_cls: type):
+def _resolve_type(
+    arg: Union[Type, str, ForwardRef], factory_cls: type
+) -> Optional[Type]:
     """Resolve a generic type-arg (str forward-ref, ForwardRef, or class)."""
     if not isinstance(arg, (str, ForwardRef)):
         return arg
@@ -129,7 +135,7 @@ class BaseFactory(ABC, Generic[T]):
         return entry
 
     @classmethod
-    def list_registered(cls) -> list:
+    def list_registered(cls) -> List[str]:
         """List all registered component names."""
         return sorted(cls._entries)
 

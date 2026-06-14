@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Self
+from typing import Any, Dict, Optional, Self
 
 import torch
 import torch.nn as nn
@@ -36,7 +36,7 @@ class TrainContext:
 
     world_size: int = field(default=1)
     rank: int = field(default=0)
-    kwargs: dict = field(default_factory=dict)
+    kwargs: Dict[str, Any] = field(default_factory=dict)
 
 
 class TrainContextBuilder:

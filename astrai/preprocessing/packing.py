@@ -12,7 +12,7 @@ from typing import Dict, List, Tuple
 from astrai.factory import BaseFactory
 
 
-def _truncate(seq: list, max_len: int, mode: str) -> list:
+def _truncate(seq: List[int], max_len: int, mode: str) -> List[int]:
     if len(seq) <= max_len:
         return seq
     if mode == "keep_end":
@@ -26,10 +26,11 @@ class PackingStrategy(ABC):
     @abstractmethod
     def apply(
         self,
-        keys: Dict[str, List[list]],
+        keys: Dict[str, List[List[int]]],
         max_packed_len: int,
         truncation_mode: str,
-    ) -> Dict[str, List[list]]: ...
+    ) -> Dict[str, List[List[int]]]:
+        raise NotImplementedError
 
 
 class PackingStrategyFactory(BaseFactory["PackingStrategy"]):
@@ -38,7 +39,12 @@ class PackingStrategyFactory(BaseFactory["PackingStrategy"]):
 
 @PackingStrategyFactory.register("simple")
 class SimplePacking(PackingStrategy):
-    def apply(self, keys, max_packed_len, truncation_mode):
+    def apply(
+        self,
+        keys: Dict[str, List[List[int]]],
+        max_packed_len: int,
+        truncation_mode: str,
+    ) -> Dict[str, List[List[int]]]:
         return {
             k: [_truncate(v, max_packed_len, truncation_mode) for v in vals]
             for k, vals in keys.items()
@@ -47,7 +53,12 @@ class SimplePacking(PackingStrategy):
 
 @PackingStrategyFactory.register("bfd")
 class BFDPacking(PackingStrategy):
-    def apply(self, keys, max_packed_len, truncation_mode):
+    def apply(
+        self,
+        keys: Dict[str, List[List[int]]],
+        max_packed_len: int,
+        truncation_mode: str,
+    ) -> Dict[str, List[List[int]]]:
         sequences = keys.get("sequence", [])
         if not sequences:
             return keys
@@ -61,7 +72,7 @@ class BFDPacking(PackingStrategy):
         return dict(reordered)
 
     @staticmethod
-    def _plan(sequences: List[list], max_packed_len: int) -> List[Tuple[int, int]]:
+    def _plan(sequences: List[List[int]], max_packed_len: int) -> List[Tuple[int, int]]:
         n = len(sequences)
         order = sorted(range(n), key=lambda i: len(sequences[i]), reverse=True)
         bins: List[List[int]] = []
