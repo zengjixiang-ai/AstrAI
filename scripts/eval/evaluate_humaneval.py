@@ -14,8 +14,6 @@ import argparse
 import json
 import os
 import re
-import signal
-import sys
 from math import prod
 from multiprocessing import Process, Queue
 from typing import Dict, List, Optional, Tuple
