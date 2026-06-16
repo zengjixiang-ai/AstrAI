@@ -9,9 +9,9 @@
 <div align="center">
   <img src="https://img.shields.io/badge/python-3.12+-blue.svg" alt="python">
   <img src="https://img.shields.io/badge/license-GPL--3.0-blue.svg" alt="license">
-  <img src="https://img.shields.io/github/v/release/ViperEkura/AstrAI?color=76bad9" alt="release">
-  <img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.github.com%2Frepos%2FViperEkura%2FAstrAI&query=%24.stargazers_count&label=stars&suffix=%20stars&color=76bad9" alt="stars">
-  <img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.github.com%2Frepos%2FViperEkura%2FAstrAI&query=%24.forks_count&label=forks&suffix=%20forks&color=76bad9" alt="forks">
+  <img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/ViperEkura/AstrAI/gh-pages/badges/release.json" alt="release">
+  <img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/ViperEkura/AstrAI/gh-pages/badges/stars.json" alt="stars">
+  <img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/ViperEkura/AstrAI/gh-pages/badges/forks.json" alt="forks">
 </div>
 <br>
 
