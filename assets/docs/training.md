@@ -127,8 +127,9 @@ Keys: `prompts`, `responses`, `masks`, `rewards`.
 |------|-------|-------------|
 | Cosine | `CosineScheduler` | Linear warmup → cosine decay to `min_rate` |
 | SGDR | `SGDRScheduler` | Cosine annealing with warm restarts (`t_mult=2`) |
+| WSD | `WSDScheduler` | Warmup-Stable-Decay with sqrt cooldown |
 
-Created by `SchedulerFactory.create(optimizer, schedule_type, **kwargs)`. Valid types: `"cosine"`, `"sgdr"`. Omit to use no scheduler.
+Created by `SchedulerFactory.create(schedule_type, optimizer, **kwargs)`. Valid types: `"cosine"`, `"sgdr"`, `"wsd"`. Omit to use no scheduler.
 
 ## Gradient Checkpointing
 

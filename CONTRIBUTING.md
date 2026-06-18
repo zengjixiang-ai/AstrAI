@@ -5,7 +5,7 @@ Thank you for your interest in contributing! This document provides step-by-step
 ## Quick Start
 
 ```bash
-git clone https://github.com/your-username/AstrAI.git
+git clone https://github.com/ViperEkura/AstrAI.git
 cd AstrAI
 pip install -e ".[dev]"     # install with dev dependencies (pytest, ruff)
 ```
