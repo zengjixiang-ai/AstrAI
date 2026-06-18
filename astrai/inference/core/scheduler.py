@@ -70,8 +70,8 @@ class InferenceScheduler:
             dtype=self.dtype,
         )
 
-        self._running = False
-        self._fatal_error: Optional[Exception] = None
+        self._stop_event = threading.Event()
+        self._loop_thread: Optional[threading.Thread] = None
 
     def add_task(self, prompt: str, **kwargs) -> str:
         return self._task_mgr.add_task(prompt, **kwargs)
@@ -86,7 +86,7 @@ class InferenceScheduler:
     def _run_generation_loop(self):
         stop_ids = self._task_mgr.tokenizer.stop_ids
         try:
-            while self._running:
+            while not self._stop_event.is_set():
                 finished = self._task_mgr.remove_finished_tasks(stop_ids)
                 for task in finished:
                     self._page_cache.task_free(task.task_id)
@@ -176,8 +176,7 @@ class InferenceScheduler:
                                     t.stream_callback(STOP)
 
         except Exception as e:
-            self._fatal_error = e
-            self._running = False
+            self._stop_event.set()
             logger.error(f"Scheduler loop crashed: {e}", exc_info=True)
             for task in self._task_mgr.get_active_tasks():
                 if task.stream_callback:
@@ -189,17 +188,19 @@ class InferenceScheduler:
             self._task_mgr.clear_queues()
 
     def start(self):
-        if not self._running:
-            self._running = True
-            t = threading.Thread(target=self._run_generation_loop, daemon=True)
-            t.start()
-            self._loop_thread = t
+        if self._loop_thread is not None and self._loop_thread.is_alive():
+            return
+        self._stop_event.clear()
+        t = threading.Thread(target=self._run_generation_loop, daemon=True)
+        t.start()
+        self._loop_thread = t
 
     def stop(self):
-        self._running = False
+        self._stop_event.set()
         self._task_mgr.wake()
-        if hasattr(self, "_loop_thread"):
+        if self._loop_thread is not None:
             self._loop_thread.join(timeout=2.0)
+        self._loop_thread = None
         for task in self._task_mgr.get_active_tasks():
             if task.stream_callback:
                 task.stream_callback(STOP)
