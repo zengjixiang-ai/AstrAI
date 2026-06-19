@@ -2,6 +2,17 @@
 
 Declarative JSON-driven data preprocessing. One `SectionedMaskBuilder` handles all formats via `input.sections` (single-output) or `input.sources` (multi-output).
 
+## Contents
+
+- [Philosophy](#philosophy)
+- [Config Structure](#config-structure)
+- [Quick Start](#quick-start) — SFT Chat, SFT Instruction, Pretrain, DPO, GRPO examples
+- [Configuration Reference](#configuration-reference) — all fields
+- [Mask Algorithm](#mask-algorithm)
+- [Output Layout](#output-layout)
+- [CLI](#cli)
+- [Python API](#python-api)
+
 ## Philosophy
 
 | Component | Responsibility |

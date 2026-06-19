@@ -1,16 +1,57 @@
 # Data Flow
 
-This document describes the data pipeline: from raw text to model input tensors.
+This document describes the data pipeline: from raw text to model input tensors. For creating preprocessing configs, see [Preprocessing Guide](preprocessing.md).
+
+## Contents
+
+- [Overview](#overview)
+- [Data Preparation](#data-preparation) — tokenization, format detection, backends
+- [Data Keys by Training Type](#data-keys-by-training-type)
+- [Dataset Architecture](#dataset-architecture)
+- [Sampler](#sampler)
+- [DataLoader](#dataloader)
 
 ## Overview
 
 ```
-Raw Text → AutoTokenizer → Token IDs → .h5/.bin → Store.load() → Store.fetch() → Dataset → Sampler → DataLoader → Training/Inference
+JSONL Lines → Pipeline (mask builder) → Tokenized Tensors
+                                              ↓
+                                      .h5 or .bin storage
+                                              ↓
+                                      Store.load()
+                                              ↓
+                                      Store.fetch(begin, end, keys)
+                                              ↓
+                                      BaseDataset.__getitem__(idx)
+                                              ↓
+                                      Sampler → DataLoader → Training / Inference
 ```
 
 ## Data Preparation
 
 Raw text is tokenized via `AutoTokenizer.encode()` and saved as HDF5 (`.h5`) or binary (`.bin` + `meta.json`) files with keyed tensor groups.
+
+### Tokenization
+
+The `Pipeline` reads JSONL lines, applies the mask builder (see [Preprocessing](preprocessing.md)), and produces flat token sequences:
+
+```python
+# Per JSONL line: messages → chat template → token IDs + loss mask
+tokens = tokenizer.encode(rendered_text)        # List[int]
+loss_mask = [0, 0, 0, 1, 1, 1, 1, 1, 1]        # 0=masked, 1=train
+# Stored as flat tensors, packed with other lines by packing strategy
+```
+
+The output `meta.json` records the storage format, key names, dtype, total token count, and tensor shapes for each shard.
+
+### Format Detection
+
+`detect_format(load_path)` inspects the directory:
+
+- If `*.h5` files exist → `"h5"` (HDF5 backend)
+- If `*.bin` + `meta.json` files exist → `"bin"` (memory-mapped backend)
+
+### Store Backends
 
 Storage format is auto-detected by `detect_format()`; backends are dispatched via registry:
 
@@ -19,7 +60,11 @@ StoreFactory.create("h5")  → H5Store
 StoreFactory.create("bin") → MmapStore
 ```
 
-H5 backend supports shared memory via `.share_memory_()`. Bin (mmap) uses OS page-cache sharing natively.
+**H5Store**: Reads HDF5 files, supports `share_memory_()` for multi-process DataLoader workers (copies tensors to shared memory).
+
+**MmapStore**: Memory-maps `.bin` files. OS page cache sharing is native — no explicit `share_memory_()` needed. Uses `torch.from_numpy(np.memmap(...))`.
+
+Both backends normalise tensors into `Store._data[Dict[str, List[Tensor]]]` + `Store._cum[Dict[str, List[int]]]` (cumulative lengths for bisect-based indexing).
 
 ## Data Keys by Training Type
 
@@ -61,4 +106,4 @@ DatasetFactory.load(train_type, load_path, window_size, stride=None, storage_typ
 
 Standard PyTorch `DataLoader` with configurable `batch_size`, `num_workers`, `pin_memory`, `prefetch_factor`. Sampler produces indices; dataloader fetches tensor batches via `__getitem__`.
 
-> Document Update Time: 2026-05-30
+> Document Update Time: 2026-06-19

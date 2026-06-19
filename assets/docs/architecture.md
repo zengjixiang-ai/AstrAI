@@ -1,5 +1,12 @@
 # AstrAI Architecture
 
+## Contents
+
+- [Class Diagram](#class-diagram) — Full Mermaid class diagram across 10+ namespaces
+- [Module Overview](#module-overview) — Component inventory per module
+- [Design Patterns](#design-patterns) — 13 documented patterns with classes
+- [Core Relationships](#core-relationships) — 11 key inter-component relationships
+
 ## Class Diagram
 
 ```mermaid

@@ -18,7 +18,6 @@
   <img src="https://img.shields.io/github/v/release/ViperEkura/AstrAI?label=Release&color=76bad9" alt="release">
   <img src="https://img.shields.io/github/stars/ViperEkura/AstrAI?style=flat&label=Stars&color=76bad9" alt="stars">
   <img src="https://img.shields.io/github/forks/ViperEkura/AstrAI?style=flat&label=Forks&color=76bad9" alt="forks">
-  <img src="https://img.shields.io/github/actions/workflow/status/ViperEkura/AstrAI/tests.yml?label=CI&color=76bad9" alt="ci">
 </div>
 
 <br>
@@ -35,7 +34,8 @@
 ## 📖 目录
 
 - [特性](#特性)
-- [快速开始](#快速开始)
+- [快速上手](#快速上手)
+- [演示](#演示)
 - [文档](#文档)
 - [贡献](#贡献)
 - [社区](#社区)
@@ -56,33 +56,43 @@
 - 🤗 **HuggingFace 风格 API**: 类 HuggingFace 的 AutoModel/AutoTokenizer 接口，方便加载模型和分词器。
 - 🔌 **双 API 兼容**: 同时支持 OpenAI 和 Anthropic 聊天补全 API，开箱即用。
 
-### 快速开始
+### 快速上手
 
-#### 安装
+端到端演示，只需 5 步：
+
+**1. 安装**
 
 ```bash
 git clone https://github.com/ViperEkura/AstrAI.git
 cd AstrAI
 pip install -e .
+# pip install -e ".[dev]"    # 可选：开发依赖（pytest, ruff）
 ```
 
-安装开发依赖：
+**2. 下载模型**
 
 ```bash
-pip install -e ".[dev]"
+python scripts/demo/download.py    # 下载 1B 检查点到 params/
 ```
 
-#### 下载预训练模型
+**3. 预处理数据**
 
-下载预训练模型权重（1B 双语检查点）到 `params/` 目录：
+创建 `pretrain.json`（`seq` 策略的预处理配置）：
+
+```json
+{
+    "version": 1,
+    "input": {"sections": [{"field": "text", "action": "train"}]},
+    "preprocessing": {"max_seq_len": 2048},
+    "output": {"storage_format": "bin"}
+}
+```
 
 ```bash
-python scripts/demo/download.py
+python scripts/tools/preprocess.py data/*.jsonl -o output/ -c pretrain.json
 ```
 
-或从 [HuggingFace](https://huggingface.co/ViperEk/KHAOSZ) 手动下载放入 `params/`。
-
-#### 训练模型
+**4. 训练**
 
 ```bash
 export CUDA_VISIBLE_DEVICES=0,1,2,3
@@ -109,15 +119,54 @@ nohup python scripts/tools/train.py \
     > out.log 2> err.log &
 ```
 
-完整参数列表见[参数说明](./params.md)。
+**5. 启动服务并调用**
+
+```bash
+# 终端 1：启动服务
+python scripts/tools/server.py --param_path ./params --device cuda
+
+# 终端 2：发起请求
+curl http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"messages":[{"role":"user","content":"你好"}],"max_tokens":512}'
+```
+
+### 演示
+
+查看 `scripts/demo/` 文件夹中的演示：
+
+```bash
+# 下载模型权重（运行演示前必需）
+python scripts/demo/download.py                      # model → params/
+
+# 交互式流式聊天（多轮对话，保持历史记录）
+python scripts/demo/stream_chat.py
+# 在 >> 后输入消息，输入 !exit 退出
+
+# 批量生成（5 条硬编码提示词，非流式）
+python scripts/demo/generate_batch.py
+
+# 单条提示词自回归流式生成
+python scripts/demo/generate_ar.py
+```
+
+所有生成演示默认使用 `temperature=0.8`、`top_p=0.95`、`top_k=50`、`max_tokens=2048`，需要 `params/` 目录包含模型权重（请先运行 `download.py`）。
+
+观看 [bilibili](https://www.bilibili.com/video/BV1fuLB6yEj6) 上的视频演示。
+
+---
+
+更多选项请参考[文档](#文档)。
 
 #### 文本生成
 
+从 JSONL 文件批量生成：
+
 ```bash
 python scripts/tools/generate.py \
-    --param_path /path/to/model \
-    --input_json_file /path/to/input.jsonl \
-    --output_json_file /path/to/output.jsonl
+    --param_path ./params \
+    --input_json_file input.jsonl \
+    --output_json_file output.jsonl
 ```
 
 #### Docker
@@ -130,9 +179,6 @@ docker build -t astrai:latest .
 
 # 启用 GPU 运行
 docker run --gpus all -it astrai:latest
-
-# 指定特定 GPU
-docker run --gpus '"device=0,1"' -it astrai:latest
 
 # 运行推理服务
 docker run --gpus all -p 8000:8000 astrai:latest \
@@ -150,84 +196,37 @@ docker compose --profile cpu up -d
 
 > **注意**: 必须使用 `--gpus all` 才能启用 CUDA 支持，否则 `torch.cuda.is_available()` 将返回 `False`。
 
-#### 启动 HTTP 服务
+#### HTTP API 示例
 
-启动推理服务器，支持 OpenAI 和 Anthropic 兼容的 HTTP API：
-
-```bash
-python -m scripts.tools.server --port 8000 --device cuda
-```
-
-发起请求：
+除[快速上手](#快速上手)流程外，更多请求示例：
 
 ```bash
-# OpenAI 兼容
-curl -X POST http://localhost:8000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "messages": [{"role": "user", "content": "你好"}],
-    "max_tokens": 512
-  }'
-
 # OpenAI 兼容流式
 curl -X POST http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{
-    "messages": [{"role": "user", "content": "讲个故事"}],
-    "stream": true,
-    "max_tokens": 500
-  }'
+  -d '{"messages":[{"role":"user","content":"讲个故事"}],"stream":true,"max_tokens":500}'
 
 # Anthropic 兼容
 curl -X POST http://localhost:8000/v1/messages \
   -H "Content-Type: application/json" \
-  -d '{
-    "model": "astrai",
-    "system": "你是一个乐于助人的助手。",
-    "messages": [{"role": "user", "content": "你好"}],
-    "max_tokens": 512
-  }'
+  -d '{"model":"astrai","system":"你是一个乐于助人的助手。","messages":[{"role":"user","content":"你好"}],"max_tokens":512}'
 
 # Anthropic 兼容流式并设置停止序列
 curl -X POST http://localhost:8000/v1/messages \
   -H "Content-Type: application/json" \
-  -d '{
-    "model": "astrai",
-    "messages": [{"role": "user", "content": "写个故事"}],
-    "max_tokens": 500,
-    "stream": true,
-    "stop_sequences": ["结束"]
-  }'
+  -d '{"model":"astrai","messages":[{"role":"user","content":"写个故事"}],"max_tokens":500,"stream":true,"stop_sequences":["结束"]}'
 
 # 健康检查
 curl http://localhost:8000/health
 ```
 
-#### 演示
-
-查看 `scripts/demo/` 文件夹中的演示：
-
-```bash
-# 下载模型权重（运行演示前必需）
-python scripts/demo/download.py
-
-# 交互式流式聊天
-python scripts/demo/stream_chat.py
-
-# 批量生成
-python scripts/demo/generate_batch.py
-
-# 自回归生成
-python scripts/demo/generate_ar.py
-```
-
-观看 [bilibili](https://www.bilibili.com/video/BV1fuLB6yEj6) 上的视频演示。
+SSE 流式格式、错误码和统计端点详见[推理文档](./inference.md)。
 
 ### 文档
 
 | 文档 | 说明 |
 |------|------|
-| [参数说明](./params.md) | 训练与推理参数配置 |
+| [CLI 参考](./params.md) | 所有 CLI 工具参数（训练、服务、生成、预处理） |
 | [架构文档](./architecture.md) | 系统架构、类图与设计模式 |
 | [训练文档](./training.md) | 训练循环、策略与公式 |
 | [推理文档](./inference.md) | KVCache、连续批处理、采样与 HTTP API |

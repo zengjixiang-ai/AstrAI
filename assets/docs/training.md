@@ -1,5 +1,18 @@
 # Training
 
+## Contents
+
+- [Autoregression](#autoregression)
+- [Causal Mask](#causal-mask)
+- [Rotary Position Embedding (RoPE)](#rotary-position-embedding-rope)
+- [Training Loop](#training-loop)
+- [Strategies](#strategies) — SEQ, SFT, DPO, GRPO
+- [LR Schedulers](#lr-schedulers)
+- [Gradient Checkpointing](#gradient-checkpointing)
+- [Checkpoint](#checkpoint)
+- [TrainContextBuilder](#traincontextbuilder-builder-pattern)
+- [Training CLI](#training-cli)
+
 ### Autoregression
 
 Given a token sequence, the model predicts the probability of the next token. Each generated token is appended to the input and fed back, repeating until an end-of-sequence token or max length.

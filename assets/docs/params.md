@@ -1,4 +1,11 @@
-# Parameter Documentation
+# CLI Parameter Reference
+
+## Contents
+
+- [Training Parameters](#training-parameters)
+- [Inference Server](#inference-server-serverpy)
+- [Generate](#generate-generatepy)
+- [Preprocess](#preprocess-preprocesspy)
 
 ## Training Parameters
 
@@ -122,4 +129,64 @@ nohup python scripts/tools/train.py \
 
 ---
 
-> Document Update Time: 2026-05-24
+## Inference Server (`server.py`)
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `--host` | str | `0.0.0.0` | Host address |
+| `--port` | int | `8000` | Port number |
+| `--param_path` | path | `project_root/params` | Path to model parameters |
+| `--device` | str | `cuda` | Device to load model on |
+| `--dtype` | str | `bfloat16` | Model weights dtype (`bfloat16`, `float16`, `float32`) |
+| `--max_batch_size` | int | `16` | Maximum batch size for continuous batching |
+| `--reload` | flag | `False` | Enable auto-reload for development |
+
+Usage:
+```bash
+python scripts/tools/server.py --param_path ./params --device cuda --dtype bfloat16
+```
+
+See [Inference Guide](inference.md) for HTTP API documentation.
+
+## Generate (`generate.py`)
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `--param_path` | str | required | Path to the model directory |
+| `--input_json_file` | str | required | Path to the input JSONL file |
+| `--output_json_file` | str | required | Path to the output JSONL file |
+| `--question_key` | str | `question` | Key for the question in input JSON |
+| `--response_key` | str | `response` | Key for the response in output JSON |
+| `--temperature` | float | `0.60` | Sampling temperature |
+| `--top_k` | int | `30` | Top-k filtering |
+| `--top_p` | float | `0.95` | Nucleus sampling threshold |
+| `--batch_size` | int | `1` | Batch size for generation |
+| `--max_tokens` | int | `2048` | Maximum tokens to generate |
+
+Usage:
+```bash
+python scripts/tools/generate.py \
+    --param_path ./params \
+    --input_json_file input.jsonl \
+    --output_json_file output.jsonl
+```
+
+## Preprocess (`preprocess.py`)
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `input_files` | path(s) | required | Input JSONL file(s), supports glob (`data/*.jsonl`) |
+| `--output_dir`, `-o` | path | required | Output directory for processed data |
+| `--config`, `-c` | path | required | Preprocessing pipeline config (JSON) |
+| `--num_workers` | int | `4` | Number of parallel workers |
+
+Usage:
+```bash
+python scripts/tools/preprocess.py data/*.jsonl -o output/ -c sft.json
+```
+
+See [Preprocessing Guide](preprocessing.md) for config file format and examples.
+
+---
+
+> Document Update Time: 2026-06-19

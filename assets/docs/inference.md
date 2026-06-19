@@ -1,5 +1,16 @@
 # Inference
 
+## Contents
+
+- [KV Cache](#kv-cache)
+- [KVCache System](#kvcache-system)
+- [Continuous Batching](#continuous-batching)
+- [Sampling](#sampling-strategy-pattern)
+- [Protocol Handlers](#protocol-handlers-strategy-pattern)
+- [Engine & GenerateResult](#engine--generateresult)
+- [HTTP API](#http-api) — endpoints, SSE, errors, stats
+- [Engine API](#engine-api)
+
 ## KV Cache
 
 At decode time, only the last query token matters. All previous K/V are cached to avoid recomputation:
@@ -133,6 +144,92 @@ Supports `stop_sequences` and streaming via `event: content_block_delta`.
 | `max_tokens` | Optional[int] | None | Max generation length |
 | `stream` | bool | False | Stream output |
 
+### SSE Streaming Format
+
+**OpenAI** (`/v1/chat/completions`, `stream=true`):
+
+```
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk","created":...,"model":"astrai",
+       "choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk",...,
+       "choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk",...,
+       "choices":[{"index":0,"delta":{},"finish_reason":"stop"}],
+       "usage":{"prompt_tokens":5,"completion_tokens":1,"total_tokens":6}}
+
+data: [DONE]
+```
+
+**Anthropic** (`/v1/messages`, `stream=true`):
+
+```
+event: message_start
+data: {"type":"message_start","message":{"id":"msg_...","model":"astrai","role":"assistant",
+       "content":[],"stop_reason":null,...}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{...}}
+
+event: message_stop
+data: {"type":"message_stop"}
+```
+
+### Error Responses
+
+All endpoints use standard HTTP status codes:
+
+| Status | Meaning |
+|--------|---------|
+| 200 | Success |
+| 400 | Invalid request (bad JSON, missing fields, validation error) |
+| 405 | Method not allowed |
+| 422 | Unprocessable entity (Pydantic validation) |
+| 500 | Internal server error (model crash, OOM, scheduler failure) |
+| 503 | Service unavailable (model not loaded, engine not ready) |
+
+Error response body:
+
+```json
+{
+    "error": {
+        "message": "Invalid request: max_tokens must be > 0",
+        "type": "invalid_request_error",
+        "code": 400
+    }
+}
+```
+
+### Stats Endpoint
+
+```
+GET /stats
+```
+
+Response:
+
+```json
+{
+    "active_requests": 3,
+    "waiting_requests": 2,
+    "total_requests": 128,
+    "cache_usage": 0.45,
+    "tokens_generated": 10240
+}
+```
+
+`cache_usage` is the fraction of KV cache pages currently in use (0.0–1.0).
+
 ## Engine API
 
 ```python
@@ -149,4 +246,4 @@ async for token in engine.generate_async("Hello", ...):    # -> AsyncGenerator[s
     print(token)
 ```
 
-> Document Update Time: 2026-05-30
+> Document Update Time: 2026-06-19
