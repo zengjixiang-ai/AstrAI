@@ -221,6 +221,44 @@ def parse_args() -> argparse.Namespace:
         help="NEFTune noise alpha (0=disabled, typical: 5.0).",
     )
 
+    parser.add_argument(
+        "--schedule_type",
+        type=str,
+        default="cosine",
+        choices=["cosine", "sgdr", "wsd"],
+        help="Learning rate scheduler type.",
+    )
+    parser.add_argument(
+        "--min_rate",
+        type=float,
+        default=None,
+        help="Minimum LR as fraction of base LR. Uses scheduler default if not set (cosine/sgdr: 0.05, wsd: 0.0).",
+    )
+    parser.add_argument(
+        "--cycle_length",
+        type=int,
+        default=None,
+        help="SGDR first cycle length in steps. Defaults to total_steps - warmup_steps.",
+    )
+    parser.add_argument(
+        "--t_mult",
+        type=int,
+        default=2,
+        help="SGDR cycle length multiplier per restart.",
+    )
+    parser.add_argument(
+        "--stable_steps",
+        type=int,
+        default=None,
+        help="WSD stable plateau steps. Required when --schedule_type wsd.",
+    )
+    parser.add_argument(
+        "--decay_steps",
+        type=int,
+        default=None,
+        help="WSD decay steps. Defaults to total_steps - warmup_steps - stable_steps.",
+    )
+
     args = parser.parse_args()
 
     return args
@@ -300,6 +338,12 @@ def train(
     master_port: str,
     start_method: str,
     neftune_alpha: float,
+    schedule_type: str,
+    min_rate: float,
+    cycle_length: int,
+    t_mult: int,
+    stable_steps: int,
+    decay_steps: int,
 ):
     assert train_type in ["seq", "sft", "dpo", "grpo"]
     assert os.path.exists(param_path)
@@ -349,14 +393,30 @@ def train(
         len(dataset), n_epoch, batch_per_device, nprocs, grad_accum_steps
     )
     warmup_steps = int(warmup_ratio * total_steps)
+    warmup_steps = min(warmup_steps, total_steps)
+
+    scheduler_kwargs = {"warmup_steps": warmup_steps}
+
+    if schedule_type == "cosine":
+        scheduler_kwargs["lr_decay_steps"] = total_steps - warmup_steps
+    elif schedule_type == "sgdr":
+        scheduler_kwargs["cycle_length"] = cycle_length or (total_steps - warmup_steps)
+        scheduler_kwargs["t_mult"] = t_mult
+    elif schedule_type == "wsd":
+        remaining = total_steps - warmup_steps
+        stable_steps_ = stable_steps or max(1, int(remaining * 0.8))
+        scheduler_kwargs["stable_steps"] = stable_steps_
+        scheduler_kwargs["decay_steps"] = max(
+            1, decay_steps or (remaining - stable_steps_)
+        )
+
+    if min_rate is not None:
+        scheduler_kwargs["min_rate"] = min_rate
 
     scheduler_fn = partial(
         create_scheduler,
-        **{
-            "schedule_type": "cosine",
-            "warmup_steps": min(warmup_steps, total_steps),
-            "lr_decay_steps": total_steps - min(warmup_steps, total_steps),
-        },
+        schedule_type=schedule_type,
+        **scheduler_kwargs,
     )
 
     grad_ckpt_modules = [DecoderBlock] if gradient_checkpointing else []
