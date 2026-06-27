@@ -23,7 +23,7 @@ COPY astrai/ ./astrai/
 COPY pyproject.toml .
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir . \
-    --extra-index-url https://download.pytorch.org/whl/cu126
+    --extra-index-url https://download.pytorch.org/whl/cu128
 
 # Production stage
 FROM ubuntu:24.04 AS production

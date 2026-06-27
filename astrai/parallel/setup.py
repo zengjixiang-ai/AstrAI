@@ -58,9 +58,11 @@ def setup_parallel(
     os.environ["WORLD_SIZE"] = str(world_size)
     os.environ["LOCAL_DEVICE"] = str(device_id)
 
-    dist.init_process_group(
-        rank=rank, world_size=world_size, backend=backend, device_id=device_id
-    )
+    pg_kwargs = dict(rank=rank, world_size=world_size, backend=backend)
+    if backend in ("nccl", "ccl"):
+        pg_kwargs["device_id"] = device_id
+
+    dist.init_process_group(**pg_kwargs)
 
     try:
         if backend == "nccl" and torch.cuda.is_available():
