@@ -46,10 +46,10 @@ The output `meta.json` records the storage format, key names, dtype, total token
 
 ### Format Detection
 
-`detect_format(load_path)` inspects the directory:
+`detect_format(load_path)` inspects the path:
 
-- If `*.h5` files exist → `"h5"` (HDF5 backend)
-- If `*.bin` + `meta.json` files exist → `"bin"` (memory-mapped backend)
+- If `load_path` is a file: checks suffix — `.h5`/`.hdf5` → `"h5"`, unknown suffix raises `ValueError`
+- If `load_path` is a directory: recursively globs for `*.h5`/`*.hdf5` files → `"h5"`, or `*.bin` + `**/meta.json` → `"bin"`
 
 ### Store Backends
 
@@ -83,7 +83,7 @@ DatasetFactory.load(train_type, load_path, window_size, stride=None, storage_typ
     → detect_format(load_path)
     → StoreFactory.create(storage_type)
     → Store.load(load_path)
-      → H5Store._normalize() / MmapStore._normalize()
+      → _normalize(raw)  # base Store, shared by both backends
         → Store._data[Dict[str, List[Tensor]]] + _cum[Dict[str, List[int]]]
           → BaseDataset.__getitem__(idx)
             → get_index(idx) → [begin, end)

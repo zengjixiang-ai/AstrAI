@@ -21,6 +21,7 @@ classDiagram
 
         class BaseModelConfig {
             +Optional[str] model_type
+            +float neftune_alpha
             +from_file(config_path) Self
             +to_file(config_path)
         }
@@ -58,10 +59,12 @@ classDiagram
             +Optional[int] dim_ffn
             +Optional[int] max_len
             +Optional[float] rope_theta
+            +str attn_type
             +Optional[int] n_heads
             +Optional[int] n_kv_heads
             +Optional[bool] use_qk_norm
             +Optional[bool] use_gated_attention
+            +str ffn_type
             +Optional[dict] rope_scaling
             +Optional[str] pooling_type
             +Optional[bool] normalize_embeddings
@@ -118,7 +121,7 @@ classDiagram
             +float max_grad_norm
             +list gradient_checkpointing_modules
             +int start_epoch
-            +int start_batch
+            +int start_samples
             +str ckpt_dir
             +int ckpt_interval
             +str log_dir
@@ -136,7 +139,9 @@ classDiagram
             +str start_method
             +str device_type
             +Optional[Dataset] val_dataset
+            +Optional[float] val_split
             +int val_step
+            +float neftune_alpha
             +str parallel_mode
             +dict executor_kwargs
             +dict extra_kwargs
@@ -215,12 +220,13 @@ classDiagram
         class Checkpoint {
             +dict state_dict
             +int epoch
-            +int iteration
+            +int consumed_samples
             +dict extra
             +dict meta
             +dict config
             +save(save_dir)
             +load(save_dir, broadcast) Checkpoint
+            +load_any(save_dir, broadcast) Optional[Checkpoint]
         }
     }
 
@@ -350,7 +356,9 @@ classDiagram
 
         class Embedding {
             +Parameter weight
+            +float neftune_noise_alpha
             +forward(x) Tensor
+            +set_neftune_alpha(alpha)
         }
     }
 
@@ -407,7 +415,9 @@ classDiagram
             +Dict _entries
             +register(name) decorator
             +create(name, *args, **kwargs) T
+            +get_component_class(name) Type
             +list_registered() list
+            +is_registered(name) bool
         }
 
         class MaskBuilderFactory {
@@ -436,13 +446,15 @@ classDiagram
             +dict model_config
             +BaseExecutor executor
             +int epoch
-            +int iteration
+            +int consumed_samples
             +float loss
+            +float grad_norm
             +DataLoader val_dataloader
             +float val_loss
             +int world_size
             +int rank
             +dict kwargs
+            +optimizer_step() int
         }
 
         class TrainContextBuilder {
@@ -594,18 +606,6 @@ classDiagram
             +create(name, **kwargs) TrainCallback
         }
 
-        class Muon {
-            +float lr
-            +float momentum
-            +float weight_decay
-            +bool nesterov
-            +int ns_steps
-            +Optional[float] adamw_lr
-            +tuple adamw_betas
-            +float adamw_eps
-            +float adamw_wd
-            +step(closure) Optional[float]
-        }
     }
 
     namespace inference {
@@ -810,7 +810,9 @@ classDiagram
 
         class ChatMessage {
             +str role
-            +str content
+            +Optional[str] content
+            +Optional[List[Dict]] tool_calls
+            +Optional[str] tool_call_id
         }
 
         class ChatCompletionRequest {
@@ -827,6 +829,8 @@ classDiagram
             +Optional[float] frequency_penalty
             +Optional[Dict[int, float]] logit_bias
             +Optional[str] user
+            +Optional[List[ToolDef]] tools
+            +Optional[Union[str, Dict]] tool_choice
         }
 
         class AnthropicMessage {
@@ -850,7 +854,7 @@ classDiagram
             <<abstract>>
             +prepare(request, engine) Tuple[str, GenContext, List[str]]
             +format_stream_start(ctx) List[str]
-            +format_chunk(token) str
+            +format_chunk(token) List[str]
             +format_stream_end(ctx, stop) List[str]
             +format_response(ctx, content, stop) Dict
         }
@@ -858,7 +862,7 @@ classDiagram
         class OpenAIResponseBuilder {
             +prepare(request, engine) Tuple
             +format_stream_start(ctx) List[str]
-            +format_chunk(token) str
+            +format_chunk(token) List[str]
             +format_stream_end(ctx, stop) List[str]
             +format_response(ctx, content, stop) Dict
         }
@@ -866,7 +870,7 @@ classDiagram
         class AnthropicResponseBuilder {
             +prepare(request, engine) Tuple
             +format_stream_start(ctx) List[str]
-            +format_chunk(token) str
+            +format_chunk(token) List[str]
             +format_stream_end(ctx, stop) List[str]
             +format_response(ctx, content, stop) Dict
         }
@@ -1171,10 +1175,10 @@ classDiagram
 | **astrai.serialization** | Checkpoint | Model serialization |
 | **astrai.model** | AutoModel, AutoRegressiveLM, EmbeddingEncoder, DecoderBlock, GQA, MLA, MLP, DeepSeekMoE, AttnFactory, FFNFactory, RMSNorm, Linear, RotaryEmbedding, Embedding | Neural network model |
 | **astrai.tokenize** | AutoTokenizer, ChatTemplate | Tokenizer and chat template |
-| **astrai.trainer** | Trainer, TrainContext, TrainContextBuilder, BaseStrategy–GRPOStrategy, StrategyFactory, BaseScheduler–WSDScheduler, SchedulerFactory, TrainCallback(Protocol)–ValidationCallback, CallbackFactory, Muon | Training workflow |
+| **astrai.trainer** | Trainer, TrainContext, TrainContextBuilder, BaseStrategy–GRPOStrategy, StrategyFactory, BaseScheduler–WSDScheduler, SchedulerFactory, TrainCallback(Protocol)–ValidationCallback, CallbackFactory | Training workflow |
 | **astrai.inference** | InferenceEngine, InferenceScheduler, Executor, KVCache–KvcacheView, Allocator–Storage, Task, TaskManager, TaskStatus, GenerationRequest, GenerateResult, BaseSamplingStrategy–SamplingPipeline, ProtocolHandler, ResponseBuilder, OpenAIResponseBuilder, AnthropicResponseBuilder, StopChecker, GenContext, ChatMessage–MessagesRequest, app | Inference service |
 | **astrai.parallel** | spawn_parallel_fn, setup_parallel, get_rank/get_world_size/get_current_device, only_on_rank, BaseExecutor, ExecutorFactory, NoneExecutor, DDPExecutor, FSDPExecutor, GradientState, AccumOptimizer, AccumScheduler, ParallelModel, RowParallelLinear, ColumnParallelLinear | Distributed parallel & gradient accumulation |
-| **astrai.factory** | Registry, BaseFactory[T] | Component registration |
+| **astrai.factory** | BaseFactory | Component registration |
 | **astrai.protocols** | OptimizerProtocol, SchedulerProtocol | Structural subtyping for optimizer/scheduler wrappers |
 
 ## Design Patterns

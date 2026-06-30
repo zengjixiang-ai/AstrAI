@@ -53,7 +53,7 @@
 | `--ckpt_interval` | Iterations between checkpoints | 5000 |
 | `--ckpt_dir` | Checkpoint save directory | checkpoint |
 | `--start_epoch` | Resume from epoch (0 = from scratch) | 0 |
-| `--start_batch` | Resume from batch iteration | 0 |
+| `--start_samples` | Resume from sample count per rank | 0 |
 
 ### Validation
 
@@ -67,8 +67,8 @@
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `--log_dir` | Directory for metric logs | checkpoint/logs |
-| `--log_interval` | Number of batch iterations between metric logs | 100 |
-| `--metrics` | Metrics to log (e.g. --metrics loss lr val_loss) | ["loss", "lr"] |
+| `--log_interval` | Number of optimizer steps between metric logs | 1 |
+| `--metrics` | Metrics to log (e.g. --metrics loss lr val_loss) | ["loss", "lr", "grad_norm"] |
 
 ### Gradient Checkpointing
 
@@ -99,6 +99,17 @@
 | `--grpo_kl_coef` | GRPO KL penalty coefficient | 0.01 | `grpo` |
 | `--grpo_sync_interval` | GRPO ref_model sync interval (steps) | 200 | `grpo` |
 | `--neftune_alpha` | NEFTune noise alpha (0=disabled, typical: 5.0) | 0.0 | `sft` |
+
+### Scheduler
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `--schedule_type` | LR scheduler type (`cosine`, `sgdr`, `wsd`) | cosine |
+| `--min_rate` | Minimum LR as fraction of base LR | None (scheduler default) |
+| `--cycle_length` | SGDR first cycle length in steps | None (total_steps - warmup_steps) |
+| `--t_mult` | SGDR cycle length multiplier per restart | 2 |
+| `--stable_steps` | WSD stable plateau steps | None (required for wsd) |
+| `--decay_steps` | WSD decay steps | None (total_steps - warmup_steps - stable_steps) |
 
 ### Usage Example
 
@@ -178,7 +189,7 @@ python scripts/tools/generate.py \
 | `input_files` | path(s) | required | Input JSONL file(s), supports glob (`data/*.jsonl`) |
 | `--output_dir`, `-o` | path | required | Output directory for processed data |
 | `--config`, `-c` | path | required | Preprocessing pipeline config (JSON) |
-| `--num_workers` | int | `4` | Number of parallel workers |
+| `--tokenizer_path` | str | `params` | Path to tokenizer directory |
 
 Usage:
 ```bash

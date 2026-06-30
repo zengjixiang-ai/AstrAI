@@ -26,8 +26,9 @@ A single config file captures the entire pipeline, reusable and version-controll
 
 ```json
 {
+  "version":       1,
   "input":         {},   // sections (single) or sources (multi)
-  "mask":          {},   // role → "train" | "mask"
+  "mask":          {},   // role -> "train" | "mask"
   "mask_default":  "mask",
   "preprocessing": {},
   "output":        {}
@@ -220,11 +221,12 @@ Config:
 }
 ```
 
-Output keys: `prompts`, `responses`, `masks`, `rewards` (float32)
+Output keys: `prompts`, `prompts_mask`, `responses`, `masks`, `rewards` (float32)
 
 - `action: "value"` — extract raw values from JSONL without tokenisation
 - `list_field: true` — tokenise each list element independently, then concatenate
 - `mask_key: "masks"` — rename the auto-generated mask key (default: `responses_mask`)
+- `prompts_mask` is auto-generated (all masked) and unused by GRPOStrategy
 
 ---
 
@@ -274,12 +276,11 @@ When `sources` is set, `sections` is ignored.
 
 ### Template mode (`template: true`)
 
-For each message in the field's array:
-
 1. Prepend BOS token (masked)
-2. Render through `chat_template` for that single message
-3. Encode rendered text
-4. Apply mask rule for the message's role
+2. For each message in the field's array:
+   1. Render through `chat_template` for that single message
+   2. Encode rendered text
+   3. Apply mask rule for the message's role
 
 ### Non-template mode
 
@@ -287,7 +288,7 @@ Encode the field value as text. Mask value is 1 (train) or 0 (mask) per the sect
 
 ### Text config detection
 
-When no section uses `template` and all sections have `action: "train"`, the builder skips mask generation entirely — all tokens are trained.
+When no section uses `template` and all sections have `action: "train"`, the builder omits `loss_mask` from the output — all tokens are trained.
 
 ---
 
@@ -298,13 +299,15 @@ When no section uses `template` and all sections have `action: "train"`, the bui
 ```
 output/
   __default__/
-    meta.json
-    sequence.bin
-    loss_mask.bin
+    shard_0000/
+      meta.json
+      sequence.bin
+      loss_mask.bin
   wiki/
-    meta.json
-    sequence.bin
-    loss_mask.bin
+    shard_0000/
+      meta.json
+      sequence.bin
+      loss_mask.bin
 ```
 
 ### Multi-Shard (`bin`)
@@ -324,7 +327,7 @@ output/
       loss_mask.bin
 ```
 
-`MmapStore` discovers all shards under the domain directory via `rglob("meta.json")`.
+For `bin` format, `MmapStore` discovers all shards under the domain directory via `rglob("meta.json")`. For `h5` format, `H5Store` discovers `.h5`/`.hdf5` files via recursive glob.
 
 ---
 
@@ -349,7 +352,7 @@ python scripts/tools/preprocess.py data/grpo/*.jsonl -o output/grpo/ -c configs/
 from astrai.preprocessing.pipeline import Pipeline
 from astrai.config.preprocess_config import PipelineConfig
 
-config = PipelineConfig.from_json("sft.json")
+config = PipelineConfig.from_file("sft.json")
 Pipeline(
     config,
     ["data_part1.jsonl", "data_part2.jsonl"],

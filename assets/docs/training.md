@@ -58,7 +58,9 @@ on_train_begin
         context.loss = loss.item()
         stand_loss = loss / executor.grad_accum_steps
         executor.backward(stand_loss)
-        context.iteration += 1
+        context.consumed_samples += (
+            context.config.batch_per_device * context.world_size
+        )
         on_batch_end
 
         if executor.sync_gradients:
@@ -78,13 +80,13 @@ on_train_end
 | `on_train_begin` | Before training starts | `GradientCheckpointingCallback` |
 | `on_epoch_begin` | Start of each epoch | `ProgressBarCallback` |
 | `on_batch_begin` | Every batch | — |
-| `on_optimizer_step` | Every accumulation window | `GradientClippingCallback`, `ValidationCallback` |
+| `on_optimizer_step` | Every accumulation window | `GradientClippingCallback`, `MetricLoggerCallback`, `ValidationCallback` |
 | `on_batch_end` | Every batch | `CheckpointCallback`, `MetricLoggerCallback`, `ProgressBarCallback` |
 | `on_epoch_end` | End of each epoch | `ProgressBarCallback` |
 | `on_error` | On exception during training | `CheckpointCallback`, `MetricLoggerCallback` |
 | `on_train_end` | Training ends (always via finally) | `CheckpointCallback`, `MetricLoggerCallback`, `GradientCheckpointingCallback` |
 
-Default callbacks (in order): `gradient_checkpointing` (activation checkpointing, optional), `checkpoint` (safetensors, rank-0), `metric_logger` (JSONL, rank-0), `progress_bar` (tqdm), `gradient_clipping`, `validation` (periodic validation on val_dataset).
+Default callbacks (in order): `gradient_checkpointing` (activation checkpointing, optional), `checkpoint` (safetensors, rank-0), `validation` (periodic validation on val_dataset), `metric_logger` (JSONL, rank-0), `progress_bar` (tqdm), `gradient_clipping`.
 
 ## Strategies
 
@@ -158,8 +160,8 @@ Callback wraps each `DecoderBlock.forward` with `torch.utils.checkpoint.checkpoi
 ## Checkpoint
 
 ```
-Checkpoint(state_dict, epoch, iteration, extra, meta, config)
-  ├── save(save_dir)    rank-0 only: meta.json (epoch/iteration/timestamp) + config.json (model config) + model.safetensors + optional {key}.pt (optimizer.pt, scheduler.pt)
+Checkpoint(state_dict, epoch, consumed_samples, extra, meta, config)
+  ├── save(save_dir)    rank-0 only: meta.json (epoch/consumed_samples/timestamp) + config.json (model config) + model.safetensors + optional {key}.pt (optimizer.pt, scheduler.pt)
   └── load(save_dir, broadcast=False)    loads from local disk; set broadcast=True to broadcast metadata from rank-0
 ```
 

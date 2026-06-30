@@ -23,7 +23,7 @@ RoPE is applied **before** KV cache write, not after — otherwise position enco
 
 ## KVCache System
 
-Six classes (plus two helpers) working together:
+Seven classes working together:
 
 ```
 KVCache (facade)
@@ -152,12 +152,13 @@ Supports `stop_sequences` and streaming via `event: content_block_delta`.
 data: {"id":"chatcmpl-...","object":"chat.completion.chunk","created":...,"model":"astrai",
        "choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
 
-data: {"id":"chatcmpl-...","object":"chat.completion.chunk",...,
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk","created":0,"model":"astrai",
        "choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}
 
-data: {"id":"chatcmpl-...","object":"chat.completion.chunk",...,
-       "choices":[{"index":0,"delta":{},"finish_reason":"stop"}],
-       "usage":{"prompt_tokens":5,"completion_tokens":1,"total_tokens":6}}
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk","created":...,"model":"astrai",
+       "choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: {"prompt_tokens":5,"completion_tokens":1,"total_tokens":6}
 
 data: [DONE]
 ```
@@ -167,7 +168,7 @@ data: [DONE]
 ```
 event: message_start
 data: {"type":"message_start","message":{"id":"msg_...","model":"astrai","role":"assistant",
-       "content":[],"stop_reason":null,...}}
+       "content":[],"usage":{"input_tokens":0}}}
 
 event: content_block_start
 data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
@@ -179,7 +180,7 @@ event: content_block_stop
 data: {"type":"content_block_stop","index":0}
 
 event: message_delta
-data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{...}}
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{...}}
 
 event: message_stop
 data: {"type":"message_stop"}
@@ -187,26 +188,20 @@ data: {"type":"message_stop"}
 
 ### Error Responses
 
-All endpoints use standard HTTP status codes:
+The server returns standard HTTP status codes. Pydantic validation errors (e.g. missing required fields)
+are handled automatically by FastAPI with 422 status. The only application-level error is engine initialization:
 
 | Status | Meaning |
 |--------|---------|
 | 200 | Success |
-| 400 | Invalid request (bad JSON, missing fields, validation error) |
-| 405 | Method not allowed |
 | 422 | Unprocessable entity (Pydantic validation) |
-| 500 | Internal server error (model crash, OOM, scheduler failure) |
 | 503 | Service unavailable (model not loaded, engine not ready) |
 
-Error response body:
+Error response body (503):
 
 ```json
 {
-    "error": {
-        "message": "Invalid request: max_tokens must be > 0",
-        "type": "invalid_request_error",
-        "code": 400
-    }
+    "detail": "Engine not initialized"
 }
 ```
 
@@ -220,15 +215,12 @@ Response:
 
 ```json
 {
-    "active_requests": 3,
-    "waiting_requests": 2,
-    "total_requests": 128,
-    "cache_usage": 0.45,
-    "tokens_generated": 10240
+    "total_tasks": 128,
+    "total_tokens": 10240,
+    "active_tasks": 3,
+    "waiting_queue": 2
 }
 ```
-
-`cache_usage` is the fraction of KV cache pages currently in use (0.0–1.0).
 
 ## Engine API
 
