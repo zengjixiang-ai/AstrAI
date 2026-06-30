@@ -9,7 +9,6 @@ from typing import IO, Callable, List, Optional, Protocol, runtime_checkable
 import torch
 import torch.distributed as dist
 import torch.nn as nn
-from torch.nn.utils import clip_grad_norm_
 from torch.utils.checkpoint import checkpoint as torch_checkpoint
 from tqdm import tqdm
 
@@ -18,12 +17,7 @@ from astrai.parallel import only_on_rank
 from astrai.parallel.setup import get_current_device, get_rank
 from astrai.serialization import Checkpoint
 from astrai.trainer.metric_util import (
-    ctx_get_grad_max,
-    ctx_get_grad_mean,
-    ctx_get_grad_min,
-    ctx_get_grad_nan_num,
     ctx_get_grad_norm,
-    ctx_get_grad_std,
     ctx_get_loss,
     ctx_get_lr,
     ctx_get_val_loss,
@@ -86,7 +80,9 @@ class GradientClippingCallback(TrainCallback):
         self.max_grad_norm = max_grad_norm
 
     def on_optimizer_step(self, context: TrainContext):
-        clip_grad_norm_(context.model.parameters(), self.max_grad_norm)
+        context.grad_norm = context.executor.clip_grad_norm(
+            context.model, self.max_grad_norm
+        )
 
 
 @CallbackFactory.register("gradient_checkpointing")
@@ -252,11 +248,6 @@ class MetricLoggerCallback(TrainCallback):
             "lr": ctx_get_lr,
             "val_loss": ctx_get_val_loss,
             "grad_norm": ctx_get_grad_norm,
-            "grad_std": ctx_get_grad_std,
-            "grad_max": ctx_get_grad_max,
-            "grad_min": ctx_get_grad_min,
-            "grad_mean": ctx_get_grad_mean,
-            "grad_nan_num": ctx_get_grad_nan_num,
         }
 
     def _metrics(self, context: TrainContext, names):

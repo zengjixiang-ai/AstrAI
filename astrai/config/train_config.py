@@ -72,7 +72,7 @@ class TrainConfig(BaseConfig):
         metadata={"help": "Number of batch iterations between metric logs."},
     )
     metrics: List[str] = field(
-        default_factory=lambda: ["loss", "lr"],
+        default_factory=lambda: ["loss", "lr", "grad_norm"],
         metadata={"help": "Metrics to record during training."},
     )
 

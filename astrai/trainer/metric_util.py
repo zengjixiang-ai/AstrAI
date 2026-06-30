@@ -1,42 +1,25 @@
-from typing import Any, Callable, Dict
+from typing import Dict
 
 import torch
 import torch.nn as nn
 
 
-def _grad_stat(
-    model: nn.Module, fn: Callable[[torch.Tensor], Any], default: Any
-) -> dict:
-    results = {}
-    for name, param in model.named_parameters():
-        results[name] = default
-        if param.grad is not None:
-            results[name] = fn(param.grad.data)
-    return results
+def grad_norm(model: nn.Module, per_param: bool = False) -> float | Dict[str, float]:
+    grads = [p.grad.detach() for p in model.parameters() if p.grad is not None]
+    if not grads:
+        return 0.0
 
-
-def grad_norm(model: nn.Module, norm_type: int = 2) -> Dict[str, float]:
-    return _grad_stat(model, lambda g: g.norm(norm_type).item(), 0.0)
-
-
-def grad_std(model: nn.Module) -> Dict[str, float]:
-    return _grad_stat(model, lambda g: g.std().item(), 0.0)
-
-
-def grad_max(model: nn.Module) -> Dict[str, float]:
-    return _grad_stat(model, lambda g: g.max().item(), -float("inf"))
-
-
-def grad_min(model: nn.Module) -> Dict[str, float]:
-    return _grad_stat(model, lambda g: g.min().item(), float("inf"))
-
-
-def grad_mean(model: nn.Module) -> Dict[str, float]:
-    return _grad_stat(model, lambda g: g.mean().item(), 0.0)
-
-
-def grad_nan_num(model: nn.Module) -> Dict[str, int]:
-    return _grad_stat(model, lambda g: g.isnan().sum().item(), 0)
+    total_sq = torch.stack([g.pow(2).sum() for g in grads]).sum()
+    if per_param:
+        norms = {}
+        for name, param in model.named_parameters():
+            if param.grad is not None:
+                norms[name] = param.grad.norm(2).item()
+            else:
+                norms[name] = 0.0
+        norms["total"] = total_sq.sqrt().item()
+        return norms
+    return total_sq.sqrt().item()
 
 
 def ctx_get_loss(ctx):
@@ -52,24 +35,4 @@ def ctx_get_val_loss(ctx):
 
 
 def ctx_get_grad_norm(ctx):
-    return grad_norm(ctx.model)
-
-
-def ctx_get_grad_std(ctx):
-    return grad_std(ctx.model)
-
-
-def ctx_get_grad_max(ctx):
-    return grad_max(ctx.model)
-
-
-def ctx_get_grad_min(ctx):
-    return grad_min(ctx.model)
-
-
-def ctx_get_grad_mean(ctx):
-    return grad_mean(ctx.model)
-
-
-def ctx_get_grad_nan_num(ctx):
-    return grad_nan_num(ctx.model)
+    return ctx.grad_norm

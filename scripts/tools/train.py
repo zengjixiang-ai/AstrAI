@@ -150,8 +150,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--metrics",
         nargs="*",
-        default=["loss", "lr"],
-        help="Metrics to log (e.g. --metrics loss lr val_loss). Default: loss lr.",
+        default=["loss", "lr", "grad_norm"],
+        help="Metrics to log (e.g. --metrics loss lr val_loss). Default: loss lr grad_norm.",
     )
     parser.add_argument(
         "--log_dir",
