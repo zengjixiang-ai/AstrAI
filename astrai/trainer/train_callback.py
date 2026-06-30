@@ -139,34 +139,35 @@ class CheckpointCallback(TrainCallback):
         self.interval = interval
         self.weight_only = weight_only
         self.save_extra_fn = save_extra_fn or CheckpointCallback.save_extra
-        self.last_ckpt_iter = 0
+        self.last_ckpt_step = 0
 
     def _save_checkpoint(self, context: TrainContext):
         state_dict = context.executor.unwrap_model(context.model)
-        self.last_ckpt_iter = context.iteration
+        self.last_ckpt_step = context.optimizer_step
 
         if get_rank() == 0:
             save_path = os.path.join(
-                self.save_dir, f"epoch_{context.epoch}_iter_{context.iteration}"
+                self.save_dir,
+                f"epoch_{context.epoch}_step_{context.optimizer_step}",
             )
             extra = self.save_extra_fn(context)
             meta = context.config.to_dict()
             context.checkpoint = Checkpoint(
                 state_dict=state_dict,
                 epoch=context.epoch,
-                iteration=context.iteration,
+                consumed_samples=context.consumed_samples,
+                config=context.model_config,
                 extra=extra,
                 meta=meta,
-                config=context.model_config,
             )
             context.checkpoint.save(save_path)
 
     def on_batch_end(self, context: TrainContext):
-        if context.iteration - self.last_ckpt_iter >= self.interval:
+        if context.optimizer_step - self.last_ckpt_step >= self.interval:
             self._save_checkpoint(context)
 
     def on_train_end(self, context: TrainContext):
-        if context.iteration != self.last_ckpt_iter:
+        if context.optimizer_step != self.last_ckpt_step:
             self._save_checkpoint(context)
 
     def on_error(self, context: TrainContext):
@@ -232,7 +233,7 @@ class MetricLoggerCallback(TrainCallback):
         log_interval: int = 1,
         metrics: List[str] = None,
     ):
-        self.last_log_iter = 0
+        self.last_log_flush_step = 0
         self._last_val_loss = None
         self._last_log_step = 0
         self.save_interval = save_interval
@@ -264,31 +265,30 @@ class MetricLoggerCallback(TrainCallback):
             "type": event_type,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "epoch": context.epoch,
-            "step": context.iteration // context.config.grad_accum_steps,
-            "iter": context.iteration,
+            "step": context.optimizer_step,
+            "consumed_samples": context.consumed_samples,
             **extra,
         }
         self.log_cache.append(entry)
 
     @only_on_rank(0)
-    def _flush(self, epoch, iter):
-        log_file = self.log_dir / f"epoch_{epoch}_iter_{iter}_metric.jsonl"
+    def _flush(self, epoch, consumed):
+        log_file = self.log_dir / f"epoch_{epoch}_consumed_{consumed}_metric.jsonl"
         log_file.parent.mkdir(parents=True, exist_ok=True)
         with open(log_file, "w") as f:
             for log in self.log_cache:
                 f.write(json.dumps(log) + "\n")
 
     def on_batch_end(self, context):
-        if context.iteration - self.last_log_iter >= self.save_interval:
-            self._flush(context.epoch, context.iteration)
-            self.last_log_iter = context.iteration
+        if context.optimizer_step - self.last_log_flush_step >= self.save_interval:
+            self._flush(context.epoch, context.optimizer_step)
+            self.last_log_flush_step = context.optimizer_step
 
     def on_optimizer_step(self, context):
-        step = context.iteration // context.config.grad_accum_steps
-        if step - self._last_log_step >= self.log_interval:
+        if context.optimizer_step - self._last_log_step >= self.log_interval:
             step_metrics = [m for m in self.metrics if m != "val_loss"]
             self._append("step", context, **self._metrics(context, step_metrics))
-            self._last_log_step = step
+            self._last_log_step = context.optimizer_step
         if context.val_loss is not None and context.val_loss != self._last_val_loss:
             self._append("validation", context, val_loss=context.val_loss)
             self._last_val_loss = context.val_loss
@@ -297,11 +297,11 @@ class MetricLoggerCallback(TrainCallback):
         self._append("epoch", context)
 
     def on_train_end(self, context):
-        if context.iteration != self.last_log_iter:
-            self._flush(context.epoch, context.iteration)
+        if context.optimizer_step != self.last_log_flush_step:
+            self._flush(context.epoch, context.optimizer_step)
 
     def on_error(self, context):
-        self._flush(context.epoch, context.iteration)
+        self._flush(context.epoch, context.optimizer_step)
 
 
 @CallbackFactory.register("validation")
@@ -328,9 +328,9 @@ class ValidationCallback(TrainCallback):
         context.val_loss = avg_loss
         context.model.train()
 
-        step_count = context.iteration // context.config.grad_accum_steps
         logger.info(
-            f"Epoch {context.epoch + 1}, Step {step_count}, Val Loss: {avg_loss:.4f}"
+            f"Epoch {context.epoch + 1}, Step {context.optimizer_step}, "
+            f"Val Loss: {avg_loss:.4f}"
         )
 
     def on_optimizer_step(self, context: TrainContext):
@@ -339,6 +339,5 @@ class ValidationCallback(TrainCallback):
         cfg = context.config
         if cfg.val_step <= 0:
             return
-        step_count = context.iteration // cfg.grad_accum_steps
-        if step_count % cfg.val_step == 0:
+        if context.optimizer_step % cfg.val_step == 0:
             self._run_validation(context)

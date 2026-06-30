@@ -52,7 +52,7 @@ def create_train_config(
         batch_per_device: Batch size per device (default: 2)
         grad_accum_steps: Gradient accumulation steps (default: 1)
         max_grad_norm: Maximum gradient norm for clipping (default: 1.0)
-        ckpt_interval: Checkpoint save interval in iterations (default: 5)
+        ckpt_interval: Checkpoint save interval in optimizer steps (default: 5)
         random_seed: Random seed for reproducibility (default: 42)
         **kwargs: Additional arguments passed to TrainConfig
 

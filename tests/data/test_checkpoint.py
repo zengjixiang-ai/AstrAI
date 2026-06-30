@@ -25,7 +25,9 @@ def test_single_process():
 
         scheduler.step()
 
-    checkpoint = Checkpoint(state_dict=model.state_dict(), epoch=3, iteration=30)
+    checkpoint = Checkpoint(
+        state_dict=model.state_dict(), epoch=3, consumed_samples=120
+    )
 
     with tempfile.TemporaryDirectory() as tmpdir:
         checkpoint.save(tmpdir)
@@ -33,7 +35,7 @@ def test_single_process():
         loaded_checkpoint = Checkpoint.load(tmpdir)
 
         assert loaded_checkpoint.epoch == 3
-        assert loaded_checkpoint.iteration == 30
+        assert loaded_checkpoint.consumed_samples == 120
 
 
 def test_checkpoint_with_extra():
@@ -46,7 +48,10 @@ def test_checkpoint_with_extra():
         "scheduler": {"last_epoch": 5},
     }
     checkpoint = Checkpoint(
-        state_dict=model.state_dict(), epoch=1, iteration=10, extra=extra
+        state_dict=model.state_dict(),
+        epoch=1,
+        consumed_samples=40,
+        extra=extra,
     )
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -77,7 +82,7 @@ def simple_training():
     checkpoint = Checkpoint(
         state_dict=model.state_dict(),
         epoch=2,
-        iteration=10,
+        consumed_samples=40,
     )
 
     rank = get_rank()

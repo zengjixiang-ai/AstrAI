@@ -29,7 +29,7 @@ class TrainContext:
     executor: BaseExecutor = field(default=None)
 
     epoch: int = field(default=0)
-    iteration: int = field(default=0)
+    consumed_samples: int = field(default=0)
     loss: float = field(default=0.0)
     grad_norm: Optional[float] = field(default=None)
     val_dataloader: Optional[DataLoader] = field(default=None)
@@ -38,6 +38,14 @@ class TrainContext:
     world_size: int = field(default=1)
     rank: int = field(default=0)
     kwargs: Dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def optimizer_step(self) -> int:
+        return self.consumed_samples // (
+            self.config.batch_per_device
+            * self.world_size
+            * self.config.grad_accum_steps
+        )
 
 
 class TrainContextBuilder:
@@ -90,7 +98,10 @@ class TrainContextBuilder:
                 if checkpoint.config:
                     context.model_config = checkpoint.config
                 context.epoch = checkpoint.epoch or cfg.start_epoch
-                context.iteration = checkpoint.iteration or cfg.start_batch
+                if checkpoint.consumed_samples > 0:
+                    context.consumed_samples = checkpoint.consumed_samples
+                else:
+                    context.consumed_samples = cfg.start_samples * context.world_size
                 context.checkpoint = checkpoint
 
         if cfg.lora is not None:
@@ -116,7 +127,7 @@ class TrainContextBuilder:
                 cfg.dataset, [n_train, n_val], generator=generator
             )
 
-        sampler_offset = context.iteration * cfg.batch_per_device
+        sampler_offset = context.consumed_samples // context.world_size
         sampler = ResumableDistributedSampler(
             data_source=train_dataset,
             start_epoch=context.epoch,

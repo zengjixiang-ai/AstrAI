@@ -136,7 +136,7 @@ def load_state_dict(path: Union[str, Path], broadcast: bool = False) -> dict:
 class Checkpoint:
     state_dict: Dict[str, Any] = field(default_factory=dict)
     epoch: int = 0
-    iteration: int = 0
+    consumed_samples: int = 0
     extra: Dict[str, Any] = field(default_factory=dict)
     meta: Dict[str, Any] = field(default_factory=dict)
     config: Dict[str, Any] = field(default_factory=dict)
@@ -150,7 +150,7 @@ class Checkpoint:
 
         meta = {
             "epoch": self.epoch,
-            "iteration": self.iteration,
+            "consumed_samples": self.consumed_samples,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
             **self.meta,
         }
@@ -176,7 +176,7 @@ class Checkpoint:
         return cls(
             state_dict=state_dict,
             epoch=meta.get("epoch", 0),
-            iteration=meta.get("iteration", 0),
+            consumed_samples=meta.get("consumed_samples", 0),
             extra=extra,
             config=config,
         )

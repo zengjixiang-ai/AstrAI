@@ -175,7 +175,10 @@ def parse_args() -> argparse.Namespace:
         "--start_epoch", type=int, default=0, help="Start epoch for training."
     )
     parser.add_argument(
-        "--start_batch", type=int, default=0, help="Start batch for training."
+        "--start_samples",
+        type=int,
+        default=0,
+        help="Start samples (per rank) for training.",
     )
 
     parser.add_argument(
@@ -317,7 +320,7 @@ def train(
     n_epoch: int,
     batch_per_device: int,
     start_epoch: int,
-    start_batch: int,
+    start_samples: int,
     grad_accum_steps: int,
     warmup_ratio: float,
     ckpt_interval: int,
@@ -444,7 +447,7 @@ def train(
         n_epoch=n_epoch,
         batch_per_device=batch_per_device,
         start_epoch=start_epoch,
-        start_batch=start_batch,
+        start_samples=start_samples,
         ckpt_interval=ckpt_interval,
         grad_accum_steps=grad_accum_steps,
         max_grad_norm=max_grad_norm,

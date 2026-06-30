@@ -47,14 +47,18 @@ class TrainConfig(BaseConfig):
 
     # checkpoint setting
     start_epoch: int = field(default=0, metadata={"help": "Start epoch for training."})
-    start_batch: int = field(
-        default=0, metadata={"help": "Start batch iteration for training."}
+    start_samples: int = field(
+        default=0,
+        metadata={
+            "help": "Start samples count (per rank). Superseded by checkpoint consumed_samples."
+        },
     )
     ckpt_dir: str = field(
         default="./checkpoint", metadata={"help": "Checkpoint directory."}
     )
     ckpt_interval: int = field(
-        default=5000, metadata={"help": "Number of iterations between checkpoints."}
+        default=5000,
+        metadata={"help": "Number of optimizer steps between checkpoints."},
     )
 
     # lora setting

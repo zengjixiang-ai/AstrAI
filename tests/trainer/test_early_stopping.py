@@ -44,14 +44,14 @@ def test_early_stopping_simulation(base_test_env, early_stopping_dataset):
         pass
 
     # Resume from latest checkpoint
-    load_dir = os.path.join(base_test_env["test_dir"], "epoch_0_iter_2")
+    load_dir = os.path.join(base_test_env["test_dir"], "epoch_0_step_1")
     trainer = Trainer(train_config)
     trainer.train(resume_dir=load_dir)
 
-    # Verify checkpoint was saved at expected iteration
-    load_dir = os.path.join(base_test_env["test_dir"], "epoch_1_iter_10")
+    # Verify checkpoint was saved at expected step
+    load_dir = os.path.join(base_test_env["test_dir"], "epoch_1_step_5")
     import json
 
     with open(os.path.join(load_dir, "meta.json")) as f:
         meta = json.load(f)
-    assert meta["iteration"] == 10
+    assert meta["consumed_samples"] == 20

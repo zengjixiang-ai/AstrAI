@@ -75,7 +75,7 @@ class MultiTurnDataset(Dataset):
 
 
 class EarlyStoppingDataset(Dataset):
-    """Dataset that triggers early stopping after a specified number of iterations."""
+    """Dataset that triggers early stopping after consuming a specified number of samples."""
 
     def __init__(self, length=10, stop_after=5):
         self.length = length
