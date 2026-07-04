@@ -18,29 +18,108 @@ from astrai.model import AutoModel
 from astrai.tokenize import AutoTokenizer
 
 
-def _score(context_ids, resp_ids, model, device):
-    """Core IFD computation: context → L_cond, response alone → L_uncond."""
-    if not resp_ids:
-        return None
-    full_ids = context_ids + resp_ids
-    inp_full = torch.tensor([full_ids], device=device, dtype=torch.long)
-    inp_resp = torch.tensor([resp_ids], device=device, dtype=torch.long)
-    logits_full = model(inp_full)["logits"][0]
-    logits_resp = model(inp_resp)["logits"][0]
-    ctx_len = len(context_ids)
-    resp_logits = logits_full[ctx_len - 1 : -1]
-    resp_targets = torch.tensor(resp_ids, device=device, dtype=torch.long)
-    L_cond = F.cross_entropy(resp_logits, resp_targets, reduction="mean").item()
-    unp_logits = logits_resp[:-1]
-    unp_targets = torch.tensor(resp_ids[1:], device=device, dtype=torch.long)
-    L_uncond = F.cross_entropy(unp_logits, unp_targets, reduction="mean").item()
-    ifd = L_cond / L_uncond if L_uncond > 0 else None
-    return {
-        "L_cond": round(L_cond, 6),
-        "L_uncond": round(L_uncond, 6),
-        "ifd": round(ifd, 6) if ifd is not None else None,
-        "resp_len": len(resp_ids),
-    }
+def _pack_bins(pairs, max_len):
+    """BFD bin packing: pack (c+r) into bins of max total length."""
+    indexed = sorted(enumerate(pairs), key=lambda x: -(len(x[1][0]) + len(x[1][1])))
+    bins = []  # each bin: list of (orig_idx, ctx_ids, resp_ids)
+    lengths = []
+    for orig_idx, (c, r) in indexed:
+        size = len(c) + len(r)
+        best_bin = -1
+        for bi, rem in enumerate(lengths):
+            if rem >= size:
+                if best_bin < 0 or rem < lengths[best_bin]:
+                    best_bin = bi
+        if best_bin >= 0:
+            bins[best_bin].append((orig_idx, c, r))
+            lengths[best_bin] -= size
+        else:
+            bins.append([(orig_idx, c, r)])
+            lengths.append(max_len - size)
+    return bins
+
+
+@torch.inference_mode()
+def _score_batch(pairs, model, device, max_len=2048):
+    """BFD-packed IFD: pack items into bins, one forward pass per bin."""
+    if not pairs:
+        return []
+    bins = _pack_bins(pairs, max_len)
+
+    result = [None] * len(pairs)
+
+    for bin_items in bins:
+        seq_ids = []
+        global_pos = []  # doc-reset position IDs for RoPE
+        doc_ids = []  # document index for attention mask
+        doc_offsets = []
+
+        for di, (orig_idx, c, r) in enumerate(bin_items):
+            ctx_len = len(c)
+            start = len(seq_ids)
+            item_len = len(c) + len(r)
+            seq_ids.extend(c)
+            seq_ids.extend(r)
+            end = len(seq_ids)
+            global_pos.extend(range(item_len))
+            doc_ids.extend([di] * item_len)
+            doc_offsets.append((start, end, orig_idx, ctx_len))
+
+        full_ids = torch.tensor([seq_ids], device=device, dtype=torch.long)
+        pos_ids = torch.tensor([global_pos], device=device, dtype=torch.long)
+        T = len(seq_ids)
+        causal = torch.tril(torch.ones(T, T, dtype=torch.bool, device=device))
+        doc_t = torch.tensor([doc_ids], device=device)
+        doc_mask = doc_t.unsqueeze(-1) == doc_t.unsqueeze(-2)
+        attn_mask = (causal & doc_mask[0]).unsqueeze(0).unsqueeze(0)
+        logits_full = model(full_ids, position_ids=pos_ids, input_mask=attn_mask)[
+            "logits"
+        ][0]
+
+        for start, end, orig_idx, ctx_len in doc_offsets:
+            rl = end - start - ctx_len
+            if rl < 2:
+                continue
+            resp_start = start + ctx_len - 1
+            resp_logits = logits_full[resp_start : end - 1]
+            resp_targets = torch.tensor(
+                seq_ids[start + ctx_len : end], device=device, dtype=torch.long
+            )
+            L_cond = F.cross_entropy(resp_logits, resp_targets, reduction="mean").item()
+            result[orig_idx] = (L_cond, rl)
+
+    # unconditional pass: batch all responses separately (sorted by length)
+    resp_seqs = [
+        (i, result[i][1], pairs[i][1])
+        for i in range(len(pairs))
+        if result[i] is not None
+    ]
+    if resp_seqs:
+        resp_seqs.sort(key=lambda x: -x[1])
+        r_batch = torch.zeros(
+            len(resp_seqs),
+            max(len(r) for _, _, r in resp_seqs),
+            dtype=torch.long,
+            device=device,
+        )
+        for ri, (_, rl, r_ids) in enumerate(resp_seqs):
+            r_batch[ri, :rl] = torch.tensor(r_ids, dtype=torch.long)
+        logits_resp = model(r_batch)["logits"]
+
+        for ri, (orig_idx, rl, _) in enumerate(resp_seqs):
+            L_cond = result[orig_idx][0]
+            unp_logits = logits_resp[ri, : rl - 1]
+            unp_targets = r_batch[ri, 1:rl]
+            L_uncond = F.cross_entropy(unp_logits, unp_targets, reduction="mean").item()
+            ifd = L_cond / L_uncond if L_uncond > 0 else None
+            result[orig_idx] = {
+                "L_cond": round(L_cond, 6),
+                "L_uncond": round(L_uncond, 6),
+                "ifd": round(ifd, 6) if ifd is not None else None,
+                "resp_len": rl,
+            }
+
+    return result
 
 
 def _trim(context_ids, resp_ids, max_len):
@@ -63,7 +142,7 @@ def score_plain(model, tokenizer, instruction, response, device, max_len=2048):
     ctx_ids, resp_ids = _trim(ctx_ids, resp_ids, max_len)
     if not ctx_ids or not resp_ids:
         return {"L_cond": None, "L_uncond": None, "ifd": None, "error": "empty"}
-    return _score(ctx_ids, resp_ids, model, device)
+    return _score_batch([(ctx_ids, resp_ids)], model, device, max_len)[0]
 
 
 def score_messages(model, tokenizer, messages, device, max_len=2048):
@@ -77,21 +156,21 @@ def score_messages(model, tokenizer, messages, device, max_len=2048):
         resp_ids = tokenizer.encode(msg["content"], add_special_tokens=False)
         ctx_ids, resp_ids = _trim(ctx_ids, resp_ids, max_len)
         if ctx_ids and resp_ids:
-            turns.append(_score(ctx_ids, resp_ids, model, device))
+            turns.append((ctx_ids, resp_ids))
     if not turns:
         return None
-    valid = [t for t in turns if t is not None and t["ifd"] is not None]
+    raw_scores = _score_batch(turns, model, device, max_len)
+    valid = [s for s in raw_scores if s is not None and s["ifd"] is not None]
     if not valid:
-        return {"ifd": None, "ifd_turns": turns}
-    avg = sum(t["ifd"] for t in valid) / len(valid)
+        return {"ifd": None, "ifd_turns": raw_scores}
+    avg = sum(s["ifd"] for s in valid) / len(valid)
     return {
         "ifd": avg,
         "ifd_detail": valid[0] if len(valid) == 1 else None,
-        "ifd_turns": turns,
+        "ifd_turns": raw_scores,
     }
 
 
-@torch.inference_mode()
 def process_file(
     param_path,
     input_file,
@@ -100,9 +179,12 @@ def process_file(
     resp_key,
     max_len=2048,
     data_format="plain",
+    batch_size=1,
+    device=None,
 ):
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    dtype = torch.bfloat16 if device == "cuda" else torch.float32
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    dtype = torch.bfloat16 if "cuda" in device else torch.float32
 
     model = AutoModel.from_pretrained(param_path)
     tokenizer = AutoTokenizer.from_pretrained(param_path)
@@ -114,23 +196,38 @@ def process_file(
 
     results = []
     all_ifds = []
+    buffer = []
 
     for item in tqdm.tqdm(data, desc="Computing IFD", unit="sample"):
         if data_format == "messages":
-            scores = score_messages(
-                model, tokenizer, item.get("messages", []), device, max_len
-            )
-            if scores is None:
+            turns = []
+            for i, msg in enumerate(item.get("messages", [])):
+                if msg.get("role") != "assistant":
+                    continue
+                ctx_text = "\n\n".join(m["content"] for m in item["messages"][:i])
+                ctx_ids = tokenizer.encode(ctx_text)
+                resp_ids = tokenizer.encode(msg["content"], add_special_tokens=False)
+                ctx_ids, resp_ids = _trim(ctx_ids, resp_ids, max_len)
+                if ctx_ids and resp_ids:
+                    turns.append((ctx_ids, resp_ids))
+            if not turns:
                 results.append({**item, "ifd": None, "ifd_turns": []})
-            else:
-                all_ifds.append(scores["ifd"])
-                results.append({**item, **scores})
+                continue
+            buffer.append((item, turns, "messages"))
         else:
-            scores = score_plain(
-                model, tokenizer, item[instr_key], item[resp_key], device, max_len
-            )
-            all_ifds.append(scores["ifd"])
-            results.append({**item, "ifd": scores["ifd"], "ifd_detail": scores})
+            ctx_ids = tokenizer.encode(item[instr_key], add_special_tokens=False)
+            resp_ids = tokenizer.encode(item[resp_key], add_special_tokens=False)
+            ctx_ids, resp_ids = _trim(ctx_ids, resp_ids, max_len)
+            if not ctx_ids or not resp_ids:
+                results.append({**item, "ifd": None, "ifd_detail": {"error": "empty"}})
+                continue
+            buffer.append((item, [(ctx_ids, resp_ids)], "plain"))
+
+        if len(buffer) >= batch_size:
+            _flush_buffer(buffer, results, all_ifds, model, device, max_len)
+
+    if buffer:
+        _flush_buffer(buffer, results, all_ifds, model, device, max_len)
 
     with open(output_file, "w", encoding="utf-8") as f:
         for item in results:
@@ -151,6 +248,41 @@ def process_file(
     print(f"Results saved to {output_file}")
 
 
+def _flush_buffer(buffer, results, all_ifds, model, device, max_len=2048):
+    all_pairs = []
+    indices = []
+    for item, turns, fmt in buffer:
+        start = len(all_pairs)
+        all_pairs.extend(turns)
+        indices.append((item, turns, fmt, start, len(all_pairs)))
+
+    raw = _score_batch(all_pairs, model, device, max_len)
+
+    for item, turns, fmt, start, end in indices:
+        turn_scores = raw[start:end]
+        if fmt == "messages":
+            valid = [s for s in turn_scores if s is not None and s["ifd"] is not None]
+            if not valid:
+                results.append({**item, "ifd": None, "ifd_turns": turn_scores})
+            else:
+                avg = sum(s["ifd"] for s in valid) / len(valid)
+                all_ifds.append(avg)
+                results.append(
+                    {
+                        **item,
+                        "ifd": avg,
+                        "ifd_detail": valid[0] if len(valid) == 1 else None,
+                        "ifd_turns": turn_scores,
+                    }
+                )
+        else:
+            score = turn_scores[0]
+            all_ifds.append(score["ifd"])
+            results.append({**item, "ifd": score["ifd"], "ifd_detail": score})
+
+    buffer.clear()
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Compute IFD scores for instruction-response data"
@@ -164,7 +296,7 @@ def main():
         type=str,
         default="plain",
         choices=["plain", "messages"],
-        help="Input format: 'plain' for instr_key+resp_key, 'messages' for messages array",
+        help="Input format",
     )
     parser.add_argument(
         "--instr_key", type=str, default="instruction", help="Key for instruction field"
@@ -172,6 +304,10 @@ def main():
     parser.add_argument(
         "--resp_key", type=str, default="response", help="Key for response field"
     )
+    parser.add_argument(
+        "--batch_size", type=int, default=8, help="Batch size for model forward passes"
+    )
+    parser.add_argument("--device", type=str, default=None, help="Device (e.g. cuda:0)")
     args = parser.parse_args()
 
     process_file(
@@ -182,6 +318,8 @@ def main():
         args.resp_key,
         args.max_len,
         data_format=args.format,
+        batch_size=args.batch_size,
+        device=args.device,
     )
 
 
