@@ -52,8 +52,11 @@ def compute_ifd(
 
 
 def _compute_ifd_raw(model, tokenizer, instruction, response, device, max_len) -> dict:
-    instr_ids = tokenizer.encode(instruction)
-    resp_ids = tokenizer.encode(response)
+    instr_ids = tokenizer.encode(instruction, add_special_tokens=False)
+    resp_ids = tokenizer.encode(response, add_special_tokens=False)
+
+    if len(resp_ids) > max_len:
+        resp_ids = resp_ids[:max_len]
 
     if not resp_ids:
         return {
@@ -66,28 +69,35 @@ def _compute_ifd_raw(model, tokenizer, instruction, response, device, max_len) -
     qa_len = len(instr_ids) + len(resp_ids)
     if qa_len > max_len:
         overflow = qa_len - max_len
-        instr_ids = instr_ids[overflow:]
+        if overflow >= len(instr_ids):
+            resp_ids = resp_ids[:max_len]
+            instr_ids = []
+        else:
+            instr_ids = instr_ids[overflow:]
+
+    if not instr_ids:
+        return {
+            "L_cond": None,
+            "L_uncond": None,
+            "ifd": None,
+            "error": "response too long for context",
+        }
 
     instr_len = len(instr_ids)
     resp_len = len(resp_ids)
 
     qa_ids = instr_ids + resp_ids
-    qa_tensor = torch.tensor([qa_ids], device=device, dtype=torch.long)
 
     with torch.inference_mode():
-        logits_qa = model(qa_tensor)["logits"][0]
+        logits_qa = model(torch.tensor([qa_ids], device=device, dtype=torch.long))["logits"][0]
+        logits_resp = model(torch.tensor([resp_ids], device=device, dtype=torch.long))["logits"][0]
 
     resp_logits = logits_qa[instr_len - 1 : -1]
-    resp_targets = torch.tensor(resp_ids, device=device, dtype=torch.long)
+    resp_targets = logits_resp.new_tensor(resp_ids, dtype=torch.long)
     L_cond = F.cross_entropy(resp_logits, resp_targets, reduction="mean").item()
 
-    resp_tensor = torch.tensor([resp_ids], device=device, dtype=torch.long)
-
-    with torch.inference_mode():
-        logits_resp = model(resp_tensor)["logits"][0]
-
     unp_logits = logits_resp[:-1]
-    unp_targets = resp_tensor[0, 1:]
+    unp_targets = logits_resp.new_tensor(resp_ids[1:], dtype=torch.long)
     L_uncond = F.cross_entropy(unp_logits, unp_targets, reduction="mean").item()
 
     ifd = L_cond / L_uncond if L_uncond > 0 else None
@@ -185,7 +195,7 @@ def process_file(
     output_file: str,
     instr_key: str,
     resp_key: str,
-    max_len: int,
+    max_len: int = 2048,
     use_chat_template: bool = False,
 ):
     device = "cuda" if torch.cuda.is_available() else "cpu"
