@@ -4,6 +4,15 @@ IFD = conditional_NLL / unconditional_NLL
 
 - Messages format: plain text concatenation (no chat template)
 - Plain format: raw instr_key + resp_key fields
+
+v2 changelog:
+  - Same token set: unconditional pass prefixes resp with a plain-text sentinel
+    (default ``\\n``; use ``--sentinel_text ""`` for bos/pad fallback).
+    Both branches predict the identical N resp tokens.
+    Single-token answers (rl=1) are now supported.
+  - ctx_len tracked in output
+  - skip_reason for None samples (no more silent None)
+  - --per_token for per-token IFD breakdown
 """
 
 import argparse
@@ -21,7 +30,7 @@ from astrai.tokenize import AutoTokenizer
 def _pack_bins(pairs, max_len):
     """BFD bin packing: pack (c+r) into bins of max total length."""
     indexed = sorted(enumerate(pairs), key=lambda x: -(len(x[1][0]) + len(x[1][1])))
-    bins = []  # each bin: list of (orig_idx, ctx_ids, resp_ids)
+    bins = []
     lengths = []
     for orig_idx, (c, r) in indexed:
         size = len(c) + len(r)
@@ -39,19 +48,51 @@ def _pack_bins(pairs, max_len):
     return bins
 
 
+def _resolve_sentinel_ids(tokenizer, sentinel_text):
+    """Tokenize the sentinel text for the unconditional pass prefix.
+
+    Falls back to bos/pad_token_id when sentinel_text is empty or
+    cannot be encoded.
+    """
+    if sentinel_text:
+        ids = tokenizer.encode(sentinel_text, add_special_tokens=False)
+        if ids:
+            return ids
+    for attr in ("bos_token_id", "pad_token_id", "eos_token_id"):
+        tid = getattr(tokenizer, attr, None)
+        if tid is not None:
+            return [tid]
+    return [0]
+
+
 @torch.inference_mode()
-def _score_batch(pairs, model, device, max_len=2048):
-    """BFD-packed IFD: pack items into bins, one forward pass per bin."""
+def _score_batch(
+    pairs, model, device, max_len=2048, sentinel_ids=None, per_token=False
+):
+    """BFD-packed IFD with text-sentinel-anchored unconditional pass.
+
+    Conditional:   (ctx + resp[0..i-1]) → resp[i],  i = 0..N-1
+    Unconditional: (<sentinel> + resp[0..i-1]) → resp[i],  i = 0..N-1
+
+    Both branches predict the identical N response tokens.  A short
+    plain-text sentinel gives the unconditional pass a prefix so that
+    every response token can be predicted.  Single-token answers (rl=1)
+    are supported.
+    """
     if not pairs:
         return []
-    bins = _pack_bins(pairs, max_len)
 
+    if sentinel_ids is None:
+        sentinel_ids = [0]
+
+    bins = _pack_bins(pairs, max_len)
     result = [None] * len(pairs)
 
+    # ---- conditional pass (packed, per-document position IDs) ----
     for bin_items in bins:
         seq_ids = []
-        global_pos = []  # doc-reset position IDs for RoPE
-        doc_ids = []  # document index for attention mask
+        global_pos = []
+        doc_ids = []
         doc_offsets = []
 
         for di, (orig_idx, c, r) in enumerate(bin_items):
@@ -67,8 +108,10 @@ def _score_batch(pairs, model, device, max_len=2048):
 
         full_ids = torch.tensor([seq_ids], device=device, dtype=torch.long)
         pos_ids = torch.tensor([global_pos], device=device, dtype=torch.long)
-        T = len(seq_ids)
-        causal = torch.tril(torch.ones(T, T, dtype=torch.bool, device=device))
+        seq_len = len(seq_ids)
+        causal = torch.tril(
+            torch.ones(seq_len, seq_len, dtype=torch.bool, device=device)
+        )
         doc_t = torch.tensor([doc_ids], device=device)
         doc_mask = doc_t.unsqueeze(-1) == doc_t.unsqueeze(-2)
         attn_mask = (causal & doc_mask[0]).unsqueeze(0).unsqueeze(0)
@@ -78,46 +121,72 @@ def _score_batch(pairs, model, device, max_len=2048):
 
         for start, end, orig_idx, ctx_len in doc_offsets:
             rl = end - start - ctx_len
-            if rl < 2:
-                continue
             resp_start = start + ctx_len - 1
             resp_logits = logits_full[resp_start : end - 1]
             resp_targets = torch.tensor(
                 seq_ids[start + ctx_len : end], device=device, dtype=torch.long
             )
-            L_cond = F.cross_entropy(resp_logits, resp_targets, reduction="mean").item()
-            result[orig_idx] = (L_cond, rl)
-
-    # unconditional pass: batch all responses separately (sorted by length)
-    resp_seqs = [
-        (i, result[i][1], pairs[i][1])
-        for i in range(len(pairs))
-        if result[i] is not None
-    ]
-    if resp_seqs:
-        resp_seqs.sort(key=lambda x: -x[1])
-        r_batch = torch.zeros(
-            len(resp_seqs),
-            max(len(r) for _, _, r in resp_seqs),
-            dtype=torch.long,
-            device=device,
-        )
-        for ri, (_, rl, r_ids) in enumerate(resp_seqs):
-            r_batch[ri, :rl] = torch.tensor(r_ids, dtype=torch.long)
-        logits_resp = model(r_batch)["logits"]
-
-        for ri, (orig_idx, rl, _) in enumerate(resp_seqs):
-            L_cond = result[orig_idx][0]
-            unp_logits = logits_resp[ri, : rl - 1]
-            unp_targets = r_batch[ri, 1:rl]
-            L_uncond = F.cross_entropy(unp_logits, unp_targets, reduction="mean").item()
-            ifd = L_cond / L_uncond if L_uncond > 0 else None
+            cond_losses = F.cross_entropy(
+                resp_logits, resp_targets, reduction="none"
+            ).cpu()
             result[orig_idx] = {
-                "L_cond": round(L_cond, 6),
-                "L_uncond": round(L_uncond, 6),
-                "ifd": round(ifd, 6) if ifd is not None else None,
-                "resp_len": rl,
+                "_cond_losses": cond_losses,
+                "_rl": rl,
+                "_ctx_len": ctx_len,
             }
+
+    # ---- unconditional pass (sentinel-prefixed, batched 2D) ----
+    valid_items = [
+        (
+            i,
+            result[i]["_rl"],
+            result[i]["_ctx_len"],
+            result[i]["_cond_losses"],
+            pairs[i][1],
+        )
+        for i in range(len(pairs))
+        if result[i] is not None and "_cond_losses" in result[i]
+    ]
+    if not valid_items:
+        return result
+
+    valid_items.sort(key=lambda x: -x[1])
+    prefix_len = len(sentinel_ids)
+    max_rl = prefix_len + max(rl for _, rl, _, _, _ in valid_items)
+    bsz = len(valid_items)
+
+    u_batch = torch.zeros(bsz, max_rl, dtype=torch.long, device=device)
+    for ri, (_, rl, _, _, r_ids) in enumerate(valid_items):
+        u_batch[ri, :prefix_len] = torch.tensor(sentinel_ids, dtype=torch.long)
+        u_batch[ri, prefix_len : prefix_len + rl] = torch.tensor(
+            r_ids, dtype=torch.long
+        )
+
+    logits_resp = model(u_batch)["logits"]
+
+    for ri, (orig_idx, rl, ctx_len, cond_losses, _) in enumerate(valid_items):
+        unp_logits = logits_resp[ri, prefix_len - 1 : prefix_len - 1 + rl]
+        unp_targets = u_batch[ri, prefix_len : prefix_len + rl]
+        uncond_losses = F.cross_entropy(unp_logits, unp_targets, reduction="none").cpu()
+
+        L_cond = cond_losses.mean().item()
+        L_uncond = uncond_losses.mean().item()
+        ifd = L_cond / L_uncond if L_uncond > 0 else None
+
+        out = {
+            "L_cond": round(L_cond, 6),
+            "L_uncond": round(L_uncond, 6),
+            "ifd": round(ifd, 6) if ifd is not None else None,
+            "ctx_len": ctx_len,
+            "resp_len": rl,
+        }
+        if per_token:
+            per = [
+                (round(c.item() / u.item(), 6) if u.item() > 0 else None)
+                for c, u in zip(cond_losses, uncond_losses)
+            ]
+            out["ifd_per_token"] = per
+        result[orig_idx] = out
 
     return result
 
@@ -135,17 +204,40 @@ def _trim(context_ids, resp_ids, max_len):
     return context_ids[overflow:], resp_ids
 
 
-def score_plain(model, tokenizer, instruction, response, device, max_len=2048):
+def score_plain(
+    model,
+    tokenizer,
+    instruction,
+    response,
+    device,
+    max_len=2048,
+    sentinel_ids=None,
+    per_token=False,
+):
     """Compute IFD for a single instruction-response pair (plain format)."""
     ctx_ids = tokenizer.encode(instruction, add_special_tokens=False)
     resp_ids = tokenizer.encode(response, add_special_tokens=False)
     ctx_ids, resp_ids = _trim(ctx_ids, resp_ids, max_len)
     if not ctx_ids or not resp_ids:
-        return {"L_cond": None, "L_uncond": None, "ifd": None, "error": "empty"}
-    return _score_batch([(ctx_ids, resp_ids)], model, device, max_len)[0]
+        return {
+            "L_cond": None,
+            "L_uncond": None,
+            "ifd": None,
+            "skip_reason": "empty ctx or resp",
+        }
+    return _score_batch(
+        [(ctx_ids, resp_ids)],
+        model,
+        device,
+        max_len,
+        sentinel_ids=sentinel_ids,
+        per_token=per_token,
+    )[0]
 
 
-def score_messages(model, tokenizer, messages, device, max_len=2048):
+def score_messages(
+    model, tokenizer, messages, device, max_len=2048, sentinel_ids=None, per_token=False
+):
     """Compute IFD for each assistant turn in a messages array."""
     turns = []
     for i, msg in enumerate(messages):
@@ -159,8 +251,10 @@ def score_messages(model, tokenizer, messages, device, max_len=2048):
             turns.append((ctx_ids, resp_ids))
     if not turns:
         return None
-    raw_scores = _score_batch(turns, model, device, max_len)
-    valid = [s for s in raw_scores if s is not None and s["ifd"] is not None]
+    raw_scores = _score_batch(
+        turns, model, device, max_len, sentinel_ids=sentinel_ids, per_token=per_token
+    )
+    valid = [s for s in raw_scores if s is not None and s.get("ifd") is not None]
     if not valid:
         return {"ifd": None, "ifd_turns": raw_scores}
     avg = sum(s["ifd"] for s in valid) / len(valid)
@@ -181,6 +275,8 @@ def process_file(
     data_format="plain",
     batch_size=1,
     device=None,
+    sentinel_text="\n",
+    per_token=False,
 ):
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -190,6 +286,8 @@ def process_file(
     tokenizer = AutoTokenizer.from_pretrained(param_path)
     model.to(device=device, dtype=dtype)
     model.eval()
+
+    sentinel_ids = _resolve_sentinel_ids(tokenizer, sentinel_text)
 
     with open(input_file, encoding="utf-8") as f:
         data = [json.loads(line) for line in f if line.strip()]
@@ -211,7 +309,14 @@ def process_file(
                 if ctx_ids and resp_ids:
                     turns.append((ctx_ids, resp_ids))
             if not turns:
-                results.append({**item, "ifd": None, "ifd_turns": []})
+                results.append(
+                    {
+                        **item,
+                        "ifd": None,
+                        "skip_reason": "no valid assistant turns",
+                        "ifd_turns": [],
+                    }
+                )
                 continue
             buffer.append((item, turns, "messages"))
         else:
@@ -219,15 +324,32 @@ def process_file(
             resp_ids = tokenizer.encode(item[resp_key], add_special_tokens=False)
             ctx_ids, resp_ids = _trim(ctx_ids, resp_ids, max_len)
             if not ctx_ids or not resp_ids:
-                results.append({**item, "ifd": None, "ifd_detail": {"error": "empty"}})
+                results.append(
+                    {
+                        **item,
+                        "ifd": None,
+                        "ifd_detail": {"skip_reason": "empty ctx or resp"},
+                    }
+                )
                 continue
             buffer.append((item, [(ctx_ids, resp_ids)], "plain"))
 
         if len(buffer) >= batch_size:
-            _flush_buffer(buffer, results, all_ifds, model, device, max_len)
+            _flush_buffer(
+                buffer,
+                results,
+                all_ifds,
+                model,
+                device,
+                max_len,
+                sentinel_ids,
+                per_token,
+            )
 
     if buffer:
-        _flush_buffer(buffer, results, all_ifds, model, device, max_len)
+        _flush_buffer(
+            buffer, results, all_ifds, model, device, max_len, sentinel_ids, per_token
+        )
 
     with open(output_file, "w", encoding="utf-8") as f:
         for item in results:
@@ -236,19 +358,22 @@ def process_file(
     valid_ifd = [v for v in all_ifds if v is not None]
     if valid_ifd:
         print(f"\n{'=' * 50}")
-        print(f"  Samples:    {len(data)}")
-        print(f"  Valid IFD:  {len(valid_ifd)}")
-        print(f"  Mean IFD:   {statistics.mean(valid_ifd):.4f}")
-        print(f"  Median IFD: {statistics.median(valid_ifd):.4f}")
-        print(f"  Stdev IFD:  {statistics.stdev(valid_ifd):.4f}")
-        print(f"  Min IFD:    {min(valid_ifd):.4f}")
-        print(f"  Max IFD:    {max(valid_ifd):.4f}")
+        print(f"  Samples:       {len(data)}")
+        print(f"  Valid IFD:     {len(valid_ifd)}")
+        print(f"  Skipped:       {len(data) - len(valid_ifd)}")
+        print(f"  Mean IFD:      {statistics.mean(valid_ifd):.4f}")
+        print(f"  Median IFD:    {statistics.median(valid_ifd):.4f}")
+        if len(valid_ifd) > 1:
+            print(f"  Stdev IFD:     {statistics.stdev(valid_ifd):.4f}")
+        print(f"  Min IFD:       {min(valid_ifd):.4f}")
+        print(f"  Max IFD:       {max(valid_ifd):.4f}")
         print(f"{'=' * 50}")
-
     print(f"Results saved to {output_file}")
 
 
-def _flush_buffer(buffer, results, all_ifds, model, device, max_len=2048):
+def _flush_buffer(
+    buffer, results, all_ifds, model, device, max_len, sentinel_ids, per_token
+):
     all_pairs = []
     indices = []
     for item, turns, fmt in buffer:
@@ -256,12 +381,21 @@ def _flush_buffer(buffer, results, all_ifds, model, device, max_len=2048):
         all_pairs.extend(turns)
         indices.append((item, turns, fmt, start, len(all_pairs)))
 
-    raw = _score_batch(all_pairs, model, device, max_len)
+    raw = _score_batch(
+        all_pairs,
+        model,
+        device,
+        max_len,
+        sentinel_ids=sentinel_ids,
+        per_token=per_token,
+    )
 
     for item, turns, fmt, start, end in indices:
         turn_scores = raw[start:end]
         if fmt == "messages":
-            valid = [s for s in turn_scores if s is not None and s["ifd"] is not None]
+            valid = [
+                s for s in turn_scores if s is not None and s.get("ifd") is not None
+            ]
             if not valid:
                 results.append({**item, "ifd": None, "ifd_turns": turn_scores})
             else:
@@ -277,8 +411,8 @@ def _flush_buffer(buffer, results, all_ifds, model, device, max_len=2048):
                 )
         else:
             score = turn_scores[0]
-            all_ifds.append(score["ifd"])
-            results.append({**item, "ifd": score["ifd"], "ifd_detail": score})
+            all_ifds.append(score.get("ifd"))
+            results.append({**item, "ifd": score.get("ifd"), "ifd_detail": score})
 
     buffer.clear()
 
@@ -308,6 +442,17 @@ def main():
         "--batch_size", type=int, default=8, help="Batch size for model forward passes"
     )
     parser.add_argument("--device", type=str, default=None, help="Device (e.g. cuda:0)")
+    parser.add_argument(
+        "--sentinel_text",
+        type=str,
+        default="\n",
+        help='Plain-text prefix for unconditional pass (default: "\\n"). Use "" for bos/pad fallback.',
+    )
+    parser.add_argument(
+        "--per_token",
+        action="store_true",
+        help="Include per-token IFD breakdown in output",
+    )
     args = parser.parse_args()
 
     process_file(
@@ -320,6 +465,8 @@ def main():
         data_format=args.format,
         batch_size=args.batch_size,
         device=args.device,
+        sentinel_text=args.sentinel_text,
+        per_token=args.per_token,
     )
 
 
