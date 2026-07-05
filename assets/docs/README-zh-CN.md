@@ -15,7 +15,7 @@
 <div align="center">
   <img src="https://img.shields.io/badge/python-3.12+-blue.svg" alt="python">
   <img src="https://img.shields.io/badge/license-GPL--3.0-blue.svg" alt="license">
-  <img src="https://img.shields.io/github/v/release/ViperEkura/AstrAI?label=Release&color=76bad9" alt="release">
+  <img src="https://img.shields.io/github/v/tag/ViperEkura/AstrAI?label=Release&color=76bad9" alt="release">
   <img src="https://img.shields.io/github/stars/ViperEkura/AstrAI?style=flat&label=Stars&color=76bad9" alt="stars">
   <img src="https://img.shields.io/github/forks/ViperEkura/AstrAI?style=flat&label=Forks&color=76bad9" alt="forks">
 </div>
