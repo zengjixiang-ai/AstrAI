@@ -19,13 +19,13 @@ class Executor:
         self,
         model: AutoModel,
         tokenizer: AutoTokenizer,
-        page_cache: KVCache,
+        kv_cache: KVCache,
         device: Optional[str] = None,
         dtype: Optional[torch.dtype] = None,
     ):
         self.model = model
         self.tokenizer = tokenizer
-        self.page_cache = page_cache
+        self.kv_cache = kv_cache
         self.device = device or next(model.parameters()).device
         self.dtype = dtype or next(model.parameters()).dtype
 
@@ -52,9 +52,7 @@ class Executor:
                 )
                 .unsqueeze(0)
                 .expand(batch_sz, -1),
-                paged_cache=self.page_cache.bind_tasks(
-                    task_ids, prompt_len, self.device
-                ),
+                paged_cache=self.kv_cache.bind_tasks(task_ids, prompt_len, self.device),
             )
 
     def execute_decode(self, tasks: List[Task]) -> List[int]:
@@ -81,9 +79,7 @@ class Executor:
         with torch.inference_mode():
             outputs = self.model(
                 input_ids.unsqueeze(1),
-                paged_cache=self.page_cache.bind_tasks(
-                    task_ids, total_len, self.device
-                ),
+                paged_cache=self.kv_cache.bind_tasks(task_ids, total_len, self.device),
                 position_ids=position_ids.unsqueeze(1),
             )
             logits = outputs["logits"][:, -1, :]

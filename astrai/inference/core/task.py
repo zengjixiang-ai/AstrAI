@@ -33,7 +33,6 @@ class Task:
         temperature: float = 1.0,
         top_p: float = 1.0,
         top_k: int = 50,
-        stream_callback: Optional[Callable[[str], None]] = None,
     ):
         self.task_id = task_id
         self.prompt_ids = prompt_ids
@@ -48,7 +47,6 @@ class Task:
         self.output_tokens: int = 0
         self.arrival_time = time.time()
         self.finish_time: Optional[float] = None
-        self.stream_callback = stream_callback
 
     @property
     def next_pos(self) -> int:
@@ -79,6 +77,7 @@ class TaskManager:
 
         self.waiting_queue: Deque[Task] = deque()
         self.active_tasks: List[Task] = []
+        self._callbacks: Dict[str, Callable[[str], None]] = {}
 
         self._task_event = threading.Event()
         self._lock = threading.Lock()
@@ -117,12 +116,13 @@ class TaskManager:
             temperature=temperature,
             top_p=top_p,
             top_k=top_k,
-            stream_callback=stream_callback,
         )
 
         with self._lock:
             self.waiting_queue.append(task)
             self._total_tasks += 1
+            if stream_callback:
+                self._callbacks[task_id] = stream_callback
 
         self._task_event.set()
         return task_id
@@ -134,7 +134,13 @@ class TaskManager:
                 t for t in self.waiting_queue if t.task_id != task_id
             )
             self.active_tasks = [t for t in self.active_tasks if t.task_id != task_id]
+            self._callbacks.pop(task_id, None)
         return removed_active
+
+    def invoke_callback(self, task_id: str, token: str):
+        cb = self._callbacks.get(task_id)
+        if cb:
+            cb(token)
 
     def get_stats(self) -> Dict[str, Any]:
         return {
@@ -204,6 +210,7 @@ class TaskManager:
         with self._lock:
             self.waiting_queue.clear()
             self.active_tasks.clear()
+            self._callbacks.clear()
 
     def wake(self):
         self._task_event.set()

@@ -303,6 +303,13 @@ class KVCache(ABC):
         self, task_ids: List[str], total_len: int, device: torch.device
     ) -> CacheView: ...
 
+    def task_cached(self, task_id: str) -> int:
+        return 0
+
+    def task_record_hashes(
+        self, task_id: str, prompt_ids: List[int], start_logical_page: int = 0
+    ): ...
+
 
 class PageCacheView(CacheView):
     """Bundles Storage + page_table + total_len for attention layers."""
