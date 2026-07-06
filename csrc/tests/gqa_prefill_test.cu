@@ -1,4 +1,4 @@
-// Pure-C test: compile with nvcc -I csrc csrc/tests/gqa_prefill_test.cu -o test && ./test
+// Pure-C test: nvcc -I csrc -arch=sm_89 csrc/tests/gqa_prefill_test.cu -o test && ./test
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
@@ -81,6 +81,12 @@ int main() {
         for (size_t i=0;i<nKV;i++) tmp[i]=f2bf(hV[i]);
         cudaMemcpy(dV,tmp,nKV*2,cudaMemcpyHostToDevice);
 
+        GQAParams p;
+        p.batch=B; p.q_head=Hq; p.kv_head=Hk; p.q_len=ql; p.kv_len=kl; p.head_dim=D;
+        p.use_mask=0; p.is_causal=causal; p.causal_offset=0;
+        p.scale=1.0f/sqrtf((float)D);
+        p.q=dQ; p.k=dK; p.v=dV; p.mask=nullptr; p.o=dO;
+
         dim3 grid((ql+Br-1)/Br, Hq, B);
         dim3 block(32, Br, 1);
         size_t smem=2*Bc*D*sizeof(bf16);
@@ -88,8 +94,7 @@ int main() {
                grid.x,grid.y,grid.z, block.x,block.y,block.z, smem);
 
         double t0=now_ms();
-        gqa_prefill_attn_kernel<<<grid,block,smem>>>(dQ,dK,dV,nullptr,dO,
-            B,Hq,Hk,ql,kl,D,causal,0,0);
+        gqa_prefill_attn_kernel<<<grid,block,smem>>>(p);
         cudaDeviceSynchronize();
         double kms=now_ms()-t0;
         cudaError_t err=cudaGetLastError();

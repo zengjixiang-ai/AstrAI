@@ -1,5 +1,4 @@
-// Pure-C test for decode kernel
-// compile: nvcc -I csrc csrc/tests/gqa_decode_test.cu -o test && ./test
+// Pure-C test: nvcc -I csrc -arch=sm_89 csrc/tests/gqa_decode_test.cu -o test && ./test
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
@@ -85,6 +84,12 @@ int main() {
         cudaMemcpy(dV,tmp,nKV*2,cudaMemcpyHostToDevice);
         cudaMemcpy(dMask,hMask,B*sl,cudaMemcpyHostToDevice);
 
+        GQAParams p;
+        p.batch=B; p.q_head=Hq; p.kv_head=Hk; p.q_len=1; p.kv_len=sl; p.head_dim=D;
+        p.use_mask=1; p.is_causal=0; p.causal_offset=0;
+        p.scale=1.0f/sqrtf((float)D);
+        p.q=dQ; p.k=dK; p.v=dV; p.mask=dMask; p.o=dO;
+
         size_t smem=DC_CHUNK*D*sizeof(bf16);
         dim3 block(32, gs);
         dim3 grid(B*Hk);
@@ -92,8 +97,7 @@ int main() {
                grid.x, block.x, block.y, smem);
 
         double t0=now_ms();
-        gqa_decode_attn_kernel<<<grid,block,smem>>>(dQ,dK,dV,dMask,dO,
-            B,Hq,Hk,sl,D);
+        gqa_decode_attn_kernel<<<grid,block,smem>>>(p);
         cudaDeviceSynchronize();
         double kms=now_ms()-t0;
         cudaError_t err=cudaGetLastError();
