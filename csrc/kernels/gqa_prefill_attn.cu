@@ -43,11 +43,25 @@ torch::Tensor gqa_prefill_attn(
     auto O = torch::empty_like(q);
     p.o = (bf16*)O.data_ptr();
 
-    dim3 grid((p.q_len + Br - 1) / Br, p.q_head, p.batch);
-    dim3 block(32, Br, 1);
-    size_t smem = 2 * Bc * p.head_dim * sizeof(bf16);
+    constexpr int G = 8, ROWS = 32, P_BC = 32;
+    dim3 grid((p.q_len + ROWS - 1) / ROWS, p.q_head, p.batch);
+    dim3 block(G, ROWS, 1);
+    size_t smem = 2 * P_BC * p.head_dim * sizeof(bf16);
 
-    gqa_prefill_attn_kernel<<<grid, block, smem>>>(p);
+    switch (p.head_dim) {
+        case 64:
+            gqa_prefill_attn_kernel_t<64, G, ROWS, P_BC><<<grid, block, smem>>>(p);
+            break;
+        case 128:
+            gqa_prefill_attn_kernel_t<128, G, ROWS, P_BC><<<grid, block, smem>>>(p);
+            break;
+        case 256:
+            gqa_prefill_attn_kernel_t<256, G, ROWS, P_BC><<<grid, block, smem>>>(p);
+            break;
+        default:
+            TORCH_CHECK(false, "prefill: unsupported head_dim ", p.head_dim,
+                        " (supported: 64,128,256)");
+    }
     return O;
 }
 
