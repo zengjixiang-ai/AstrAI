@@ -16,6 +16,7 @@ from astrai.dataset import (
     Store,
     StoreFactory,
 )
+from astrai.extension import available
 from astrai.factory import BaseFactory
 from astrai.inference import (
     GenerationRequest,
