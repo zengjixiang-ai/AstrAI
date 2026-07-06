@@ -7,8 +7,13 @@
 # Allow specific file types and root files
 !astrai/**/*.py
 !scripts/**/*.py
-!scripts/**/*.sh
 !tests/**/*.py
+!csrc/**/*.py
+
+!csrc/**/*.cu
+!csrc/**/*.cuh
+
+!scripts/**/*.sh
 
 # Allow GitHub files
 !/.github/**
@@ -23,3 +28,8 @@
 !/LICENSE
 !/pyproject.toml
 !/README.md
+# Allow extension modules (only source .py)
+!/astrai/extension/**/*.py
+
+# Allow build files
+!/setup.py

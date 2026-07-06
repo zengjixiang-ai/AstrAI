@@ -65,8 +65,9 @@
 ```bash
 git clone https://github.com/ViperEkura/AstrAI.git
 cd AstrAI
-pip install -e .
-# pip install -e ".[dev]"    # 可选：开发依赖（pytest, ruff）
+pip install -e .                                          # 纯 PyTorch（不含 CUDA 内核）
+# CSRC_KERNELS=true pip install -e . --no-build-isolation  # 可选：融合 CUDA 内核加速
+# pip install -e ".[dev]"                                  # 可选：开发依赖（pytest, ruff）
 ```
 
 **2. 下载模型**
