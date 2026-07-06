@@ -39,6 +39,29 @@ __device__ __forceinline__ unsigned pkb(bf16 a, bf16 b) {
     return *reinterpret_cast<unsigned*>(&v);
 }
 
+// ldmatrix: cooperatively load mma fragments from smem (one instruction per
+// 16x16 / 16x8 tile) with the exact register layout mma expects — replaces the
+// scalar per-thread fragment packing, cutting shared-load instructions and bank
+// conflicts. Each lane supplies the shared address of one 8-wide row.
+__device__ __forceinline__ void ldmatrix_x4(unsigned* r, const bf16* p) {
+    unsigned a = __cvta_generic_to_shared(p);
+    asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0,%1,%2,%3}, [%4];"
+                 : "=r"(r[0]), "=r"(r[1]), "=r"(r[2]), "=r"(r[3])
+                 : "r"(a));
+}
+__device__ __forceinline__ void ldmatrix_x2(unsigned* r, const bf16* p) {
+    unsigned a = __cvta_generic_to_shared(p);
+    asm volatile("ldmatrix.sync.aligned.m8n8.x2.shared.b16 {%0,%1}, [%2];"
+                 : "=r"(r[0]), "=r"(r[1])
+                 : "r"(a));
+}
+__device__ __forceinline__ void ldmatrix_x2_trans(unsigned* r, const bf16* p) {
+    unsigned a = __cvta_generic_to_shared(p);
+    asm volatile("ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16 {%0,%1}, [%2];"
+                 : "=r"(r[0]), "=r"(r[1])
+                 : "r"(a));
+}
+
 template <int HEAD_DIM, int WARPS, int BC>
 __global__ void gqa_prefill_attn_mma_kernel(GQAParams p) {
     constexpr int BR = 16;
@@ -46,6 +69,9 @@ __global__ void gqa_prefill_attn_mma_kernel(GQAParams p) {
     constexpr int NC8 = BC / 8;        // S n-tiles (N=8 each)
     constexpr int KT2 = BC / 16;       // P k-tiles (K=16 each)
     constexpr int DN8 = HEAD_DIM / 8;  // O n-tiles (N=8 each)
+    constexpr int LD = HEAD_DIM + 8;   // padded smem row stride (kills ldmatrix
+                                       // bank conflicts: consecutive rows land
+                                       // in distinct banks instead of colliding)
 
     const int warp = threadIdx.x / 32;
     const int lane = threadIdx.x % 32;
@@ -59,29 +85,26 @@ __global__ void gqa_prefill_attn_mma_kernel(GQAParams p) {
     const int qrow0 = (blockIdx.x * WARPS + warp) * BR;
 
     extern __shared__ __align__(16) bf16 smem[];
-    bf16* sK = smem;                    // [BC][HEAD_DIM]
-    bf16* sV = sK + BC * HEAD_DIM;       // [BC][HEAD_DIM]
-    bf16* sQ = sV + BC * HEAD_DIM + warp * (BR * HEAD_DIM);  // per-warp [BR][HEAD_DIM]
+    bf16* sK = smem;                                          // [BC][LD]
+    bf16* sV = sK + BC * LD;                                  // [BC][LD]
+    bf16* sQ = sV + BC * LD + warp * (BR * LD);               // per-warp [BR][LD]
 
     // stage Q into smem (zero-padded past q_len)
     const int q_base = ((batch * p.q_head + q_head) * p.q_len) * HEAD_DIM;
     for (int i = lane; i < BR * HEAD_DIM; i += 32) {
         int r = i / HEAD_DIM, d = i % HEAD_DIM;
         int qr = qrow0 + r;
-        sQ[i] = (qr < p.q_len) ? p.q[q_base + qr * HEAD_DIM + d] : __float2bfloat16(0.0f);
+        sQ[r * LD + d] = (qr < p.q_len) ? p.q[q_base + qr * HEAD_DIM + d] : __float2bfloat16(0.0f);
     }
     __syncwarp();
 
-    // Q resident A-fragments: Qa[kt][0..3]
+    // Q resident A-fragments: Qa[kt][0..3] (loaded once via ldmatrix.x4)
     unsigned Qa[KD][4];
+    int qrow_l = (lane & 7) + (lane & 8);       // 0..15
+    int qcol_l = (lane & 16) ? 8 : 0;
 #pragma unroll
-    for (int kt = 0; kt < KD; kt++) {
-        int c0 = kt * 16 + 2 * tid4;
-        Qa[kt][0] = ld2(&sQ[gid * HEAD_DIM + c0]);
-        Qa[kt][1] = ld2(&sQ[(gid + 8) * HEAD_DIM + c0]);
-        Qa[kt][2] = ld2(&sQ[gid * HEAD_DIM + c0 + 8]);
-        Qa[kt][3] = ld2(&sQ[(gid + 8) * HEAD_DIM + c0 + 8]);
-    }
+    for (int kt = 0; kt < KD; kt++)
+        ldmatrix_x4(Qa[kt], &sQ[qrow_l * LD + kt * 16 + qcol_l]);
 
     float Oacc[DN8][4];
 #pragma unroll
@@ -101,8 +124,8 @@ __global__ void gqa_prefill_attn_mma_kernel(GQAParams p) {
             int r = i / HEAD_DIM, d = i % HEAD_DIM;
             int kc = kv0 + r;
             bf16 z = __float2bfloat16(0.0f);
-            sK[i] = (kc < p.kv_len) ? p.k[kv_base + kc * HEAD_DIM + d] : z;
-            sV[i] = (kc < p.kv_len) ? p.v[kv_base + kc * HEAD_DIM + d] : z;
+            sK[r * LD + d] = (kc < p.kv_len) ? p.k[kv_base + kc * HEAD_DIM + d] : z;
+            sV[r * LD + d] = (kc < p.kv_len) ? p.v[kv_base + kc * HEAD_DIM + d] : z;
         }
         __syncthreads();
 
@@ -112,12 +135,12 @@ __global__ void gqa_prefill_attn_mma_kernel(GQAParams p) {
         for (int n8 = 0; n8 < NC8; n8++) {
             Sacc[n8][0] = Sacc[n8][1] = Sacc[n8][2] = Sacc[n8][3] = 0.0f;
             int kv = kv0 + n8 * 8 + gid;
+            int krow_l = n8 * 8 + (lane & 7);        // kv within tile
+            int kcol_h = (lane & 8) ? 8 : 0;         // which k-half
 #pragma unroll
             for (int kt = 0; kt < KD; kt++) {
                 unsigned b[2];
-                int kr = kt * 16 + 2 * tid4;
-                b[0] = ld2(&sK[(n8 * 8 + gid) * HEAD_DIM + kr]);
-                b[1] = ld2(&sK[(n8 * 8 + gid) * HEAD_DIM + kr + 8]);
+                ldmatrix_x2(b, &sK[krow_l * LD + kt * 16 + kcol_h]);
                 mma16816(Sacc[n8], Qa[kt], b, Sacc[n8]);
             }
             (void)kv;
@@ -191,13 +214,11 @@ __global__ void gqa_prefill_attn_mma_kernel(GQAParams p) {
             Pa[1] = pk2(Sacc[kt2 * 2][2], Sacc[kt2 * 2][3]);
             Pa[2] = pk2(Sacc[kt2 * 2 + 1][0], Sacc[kt2 * 2 + 1][1]);
             Pa[3] = pk2(Sacc[kt2 * 2 + 1][2], Sacc[kt2 * 2 + 1][3]);
+            int vrow_l = kt2 * 16 + (lane & 15);  // kv within tile (0..15)
 #pragma unroll
             for (int dn8 = 0; dn8 < DN8; dn8++) {
                 unsigned b[2];
-                int kr = kt2 * 16 + 2 * tid4;
-                int d = dn8 * 8 + gid;
-                b[0] = pkb(sV[kr * HEAD_DIM + d], sV[(kr + 1) * HEAD_DIM + d]);
-                b[1] = pkb(sV[(kr + 8) * HEAD_DIM + d], sV[(kr + 9) * HEAD_DIM + d]);
+                ldmatrix_x2_trans(b, &sV[vrow_l * LD + dn8 * 8]);
                 mma16816(Oacc[dn8], Pa, b, Oacc[dn8]);
             }
         }
