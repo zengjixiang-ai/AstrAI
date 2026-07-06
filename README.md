@@ -59,8 +59,9 @@ End-to-end walkthrough in 5 steps:
 ```bash
 git clone https://github.com/ViperEkura/AstrAI.git
 cd AstrAI
-pip install -e .
-# pip install -e ".[dev]"    # optional: dev dependencies (pytest, ruff)
+pip install -e .                                          # pure PyTorch (no CUDA kernels)
+# CSRC_KERNELS=true pip install -e . --no-build-isolation  # optional: fused CUDA kernels
+# pip install -e ".[dev]"                                  # dev dependencies (pytest, ruff)
 ```
 
 **2. Download model**
