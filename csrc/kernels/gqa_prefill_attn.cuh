@@ -17,6 +17,19 @@ __device__ __forceinline__ float group_reduce_sum(float v, unsigned mask) {
     return v;
 }
 
+// load 8 contiguous bf16 from (16-byte aligned) smem as one float4, unpack to
+// 8 floats — cuts shared-load instructions 8x vs scalar bf16 loads.
+__device__ __forceinline__ void ld8(const bf16* p, float* o) {
+    float4 raw = *reinterpret_cast<const float4*>(p);
+    const __nv_bfloat162* h = reinterpret_cast<const __nv_bfloat162*>(&raw);
+#pragma unroll
+    for (int j = 0; j < 4; j++) {
+        float2 f = __bfloat1622float2(h[j]);
+        o[2 * j] = f.x;
+        o[2 * j + 1] = f.y;
+    }
+}
+
 template <int HEAD_DIM, int G, int ROWS, int P_BC>
 __global__ void gqa_prefill_attn_kernel_t(GQAParams p) {
     constexpr int DPT = HEAD_DIM / G;
@@ -83,8 +96,13 @@ __global__ void gqa_prefill_attn_kernel_t(GQAParams p) {
             const bf16* kr = sK + s * HEAD_DIM + gpos * DPT;
             float part = 0.0f;
 #pragma unroll
-            for (int i = 0; i < DPT; i++)
-                part = fmaf(qreg[i], __bfloat162float(kr[i]), part);
+            for (int i = 0; i < DPT; i += 8) {
+                float k8[8];
+                ld8(kr + i, k8);
+#pragma unroll
+                for (int j = 0; j < 8; j++)
+                    part = fmaf(qreg[i + j], k8[j], part);
+            }
             float dot = group_reduce_sum<G>(part, gmask);
 
             if (p.use_mask && p.mask && !p.mask[batch * p.kv_len + kv0 + s])
@@ -97,8 +115,13 @@ __global__ void gqa_prefill_attn_kernel_t(GQAParams p) {
 
             const bf16* vr = sV + s * HEAD_DIM + gpos * DPT;
 #pragma unroll
-            for (int i = 0; i < DPT; i++)
-                acc[i] = fmaf(__bfloat162float(vr[i]), be, acc[i] * al);
+            for (int i = 0; i < DPT; i += 8) {
+                float v8[8];
+                ld8(vr + i, v8);
+#pragma unroll
+                for (int j = 0; j < 8; j++)
+                    acc[i + j] = fmaf(v8[j], be, acc[i + j] * al);
+            }
             m = nm;
         }
         __syncthreads();

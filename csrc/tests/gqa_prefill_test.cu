@@ -52,9 +52,10 @@ static float randf() { return (float)rand() / (float)RAND_MAX - 0.5f; }
 
 int main() {
     const int configs[][7] = {
-        {1,2,1,64,128,32,0},     // tiny: B,Hq,Hk,q,kv,D,causal
+        {1,2,1,64,128,64,0},     // tiny: B,Hq,Hk,q,kv,D,causal
         {1,32,4,512,512,128,0},  // standard
         {1,32,4,128,256,128,0},  // medium
+        {1,4,2,256,256,128,1},   // causal
     };
     int n_configs = sizeof(configs) / sizeof(configs[0]);
 
@@ -96,7 +97,6 @@ int main() {
 
         double t0=now_ms();
         switch (D) {
-            case 32:  gqa_prefill_attn_kernel_t<32, G,ROWS,P_BC><<<grid,block,smem>>>(p); break;
             case 64:  gqa_prefill_attn_kernel_t<64, G,ROWS,P_BC><<<grid,block,smem>>>(p); break;
             case 128: gqa_prefill_attn_kernel_t<128,G,ROWS,P_BC><<<grid,block,smem>>>(p); break;
             default: printf("unsupported D=%d\n",D); return 1;
