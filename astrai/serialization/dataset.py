@@ -26,7 +26,10 @@ def load_h5(file_path: str, share_memory=True) -> Dict[str, List[Tensor]]:
     tensor_group: Dict[str, List[Tensor]] = {}
 
     root_path = Path(file_path)
-    h5_files = list(root_path.rglob("*.h5")) + list(root_path.rglob("*.hdf5"))
+    if root_path.is_file() and root_path.suffix in (".h5", ".hdf5"):
+        h5_files = [root_path]
+    else:
+        h5_files = list(root_path.rglob("*.h5")) + list(root_path.rglob("*.hdf5"))
 
     for h5_file in h5_files:
         with h5py.File(h5_file, "r") as f:
