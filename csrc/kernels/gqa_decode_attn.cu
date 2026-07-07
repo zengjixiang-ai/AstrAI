@@ -1,6 +1,35 @@
 #include "gqa_decode_attn.cuh"
 #include <torch/extension.h>
 
+#ifndef ASTRAI_NO_MMA
+#include "gqa_decode_attn_mma.cuh"
+#endif
+
+template <int HEAD_DIM>
+static void dispatch_decode(GQAParams& p) {
+#ifndef ASTRAI_NO_MMA
+    constexpr int BC = 32, LD = HEAD_DIM + 8;
+    int G = p.q_head / p.kv_head;
+    // head-packing tensor-core path needs 1 < G <= 16 (MMA M dim) and no mask;
+    // everything else uses the scalar kernel
+    if (!p.use_mask && G > 1 && G <= 16) {
+        dim3 grid(p.kv_head, p.batch, 1);
+        dim3 block(32, 1, 1);
+        int smem = (2 * BC * LD + 16 * LD) * (int)sizeof(bf16);
+        cudaFuncSetAttribute(gqa_decode_attn_mma_kernel<HEAD_DIM, BC>,
+                             cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
+        gqa_decode_attn_mma_kernel<HEAD_DIM, BC><<<grid, block, smem>>>(p);
+        return;
+    }
+#endif
+    // scalar fallback (per-KV-head, one warp per query head)
+    int group_size = p.q_head / p.kv_head;
+    size_t smem = DC_CHUNK * p.head_dim * sizeof(bf16);
+    dim3 block(32, group_size);
+    dim3 grid(p.batch * p.kv_head);
+    gqa_decode_attn_kernel<<<grid, block, smem>>>(p);
+}
+
 torch::Tensor gqa_decode_attn(
     torch::Tensor q,
     torch::Tensor k, 
@@ -44,12 +73,20 @@ torch::Tensor gqa_decode_attn(
     auto O = torch::empty_like(q);
     p.o = (bf16*)O.data_ptr();
 
-    int group_size = p.q_head / p.kv_head;
-    size_t smem = DC_CHUNK * p.head_dim * sizeof(bf16);
-    dim3 block(32, group_size);
-    dim3 grid(p.batch * p.kv_head);
-
-    gqa_decode_attn_kernel<<<grid, block, smem>>>(p);
+    switch (p.head_dim) {
+        case 64:
+            dispatch_decode<64>(p);
+            break;
+        case 128:
+            dispatch_decode<128>(p);
+            break;
+        case 256:
+            dispatch_decode<256>(p);
+            break;
+        default:
+            TORCH_CHECK(false, "decode: unsupported head_dim ", p.head_dim,
+                        " (supported: 64, 128, 256)");
+    }
     return O;
 }
 
@@ -62,5 +99,5 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         py::arg("is_causal") = false,
         py::arg("causal_offset") = 0,
         py::arg("scale") = py::none(),
-        "GQA decode (per-KV-head, shared K)");
+        "GQA decode (tensor-core head-packing on sm_80+, scalar fallback)");
 }
