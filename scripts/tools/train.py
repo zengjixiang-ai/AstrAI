@@ -1,15 +1,95 @@
 import argparse
 import os
 from functools import partial
+from typing import Any, Dict
 
 import torch
 import torch.optim as optim
+from torch import Tensor, nn
 
 from astrai.config import AutoRegressiveLMConfig, TrainConfig
 from astrai.dataset import DatasetFactory
 from astrai.model import AutoRegressiveLM
 from astrai.model.components.decoder_block import DecoderBlock
 from astrai.trainer import SchedulerFactory, Trainer
+
+
+class MuonMix(optim.Optimizer):
+    """Combined Muon (matrix) + AdamW (non-matrix) optimizer."""
+
+    def __init__(
+        self,
+        model: nn.Module,
+        lr: float = 3e-4,
+        weight_decay: float = 0.1,
+        momentum: float = 0.95,
+        nesterov: bool = True,
+        ns_steps: int = 5,
+        adjust_lr_fn: str = "match_rms_adamw",
+    ):
+        defaults = dict(
+            lr=lr,
+            weight_decay=weight_decay,
+            momentum=momentum,
+            nesterov=nesterov,
+            ns_steps=ns_steps,
+            adjust_lr_fn=adjust_lr_fn,
+        )
+        params = [p for p in model.parameters() if p.requires_grad]
+        super().__init__(params, defaults)
+
+        matrix_params: list[Tensor] = []
+        other_params: list[Tensor] = []
+        for name, param in model.named_parameters():
+            if not param.requires_grad:
+                continue
+            if (
+                param.dim() >= 2
+                and "norm" not in name
+                and "bias" not in name
+                and "embed" not in name
+                and "lm_head" not in name
+            ):
+                matrix_params.append(param)
+            else:
+                other_params.append(param)
+
+        self.muon = optim.Muon(
+            matrix_params,
+            lr=lr,
+            weight_decay=weight_decay,
+            momentum=momentum,
+            nesterov=nesterov,
+            ns_steps=ns_steps,
+            adjust_lr_fn=adjust_lr_fn,
+        )
+        self.adamw = optim.AdamW(
+            [{"params": other_params, "weight_decay": 0.0}],
+            lr=lr,
+            betas=(0.9, 0.95),
+            fused=True,
+        )
+
+        self.param_groups = [*self.muon.param_groups, *self.adamw.param_groups]
+
+    @torch.no_grad()
+    def step(self, closure=None):
+        self.muon.step(closure)
+        self.adamw.step(closure)
+
+    def zero_grad(self, set_to_none: bool = True):
+        self.muon.zero_grad(set_to_none)
+        self.adamw.zero_grad(set_to_none)
+
+    def state_dict(self) -> Dict[str, Any]:
+        return {
+            "muon": self.muon.state_dict(),
+            "adamw": self.adamw.state_dict(),
+        }
+
+    def load_state_dict(self, state_dict: Dict[str, Any]):
+        self.muon.load_state_dict(state_dict["muon"])
+        self.adamw.load_state_dict(state_dict["adamw"])
 
 
 def parse_args() -> argparse.Namespace:
@@ -64,22 +144,35 @@ def parse_args() -> argparse.Namespace:
         help="Max gradient norm for clipping.",
     )
     parser.add_argument(
-        "--adamw_beta1",
+        "--weight_decay",
         type=float,
-        default=0.9,
-        help="Beta1 for AdamW optimizer.",
+        default=0.1,
+        help="Weight decay (applied to Muon matrix params; non-matrix use 0).",
     )
     parser.add_argument(
-        "--adamw_beta2",
+        "--muon_momentum",
         type=float,
         default=0.95,
-        help="Beta2 for AdamW optimizer.",
+        help="Momentum factor for Muon optimizer.",
     )
     parser.add_argument(
-        "--adamw_weight_decay",
-        type=float,
-        default=0.01,
-        help="Weight decay for AdamW optimizer.",
+        "--muon_nesterov",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable Nesterov momentum for Muon.",
+    )
+    parser.add_argument(
+        "--muon_ns_steps",
+        type=int,
+        default=5,
+        help="Newton-Schulz iteration steps for Muon.",
+    )
+    parser.add_argument(
+        "--muon_adjust_lr",
+        type=str,
+        default="match_rms_adamw",
+        choices=["original", "match_rms_adamw"],
+        help="Muon learning rate adjustment strategy.",
     )
     parser.add_argument(
         "--random_seed", type=int, default=3407, help="Random seed for reproducibility."
@@ -265,21 +358,8 @@ def create_model(config):
     return AutoRegressiveLM(config).to(dtype=torch.bfloat16)
 
 
-def create_optimizer(model, **kwargs) -> optim.Optimizer:
-    decay_params = []
-    no_decay_params = []
-    for name, param in model.named_parameters():
-        if not param.requires_grad:
-            continue
-        if param.dim() < 2 or "norm" in name or "bias" in name:
-            no_decay_params.append(param)
-        else:
-            decay_params.append(param)
-    param_groups = [
-        {"params": decay_params, "weight_decay": kwargs.pop("weight_decay", 0.01)},
-        {"params": no_decay_params, "weight_decay": 0.0},
-    ]
-    return optim.AdamW(param_groups, fused=True, **kwargs)
+def create_optimizer(model, **kwargs) -> MuonMix:
+    return MuonMix(model, **kwargs)
 
 
 def create_scheduler(
@@ -310,7 +390,6 @@ def train(
     train_type: str,
     param_path: str,
     data_root_path: str,
-    max_lr: float,
     n_epoch: int,
     batch_per_device: int,
     start_epoch: int,
@@ -323,16 +402,7 @@ def train(
     val_step: int,
     metrics: list[str],
     log_dir: str,
-    dpo_beta: float,
-    grpo_clip_eps: float,
-    grpo_kl_coef: float,
-    group_size: int,
-    grpo_sync_interval: int,
-    adamw_beta1: float,
-    adamw_beta2: float,
-    adamw_weight_decay: float,
     max_grad_norm: float,
-    label_smoothing: float,
     random_seed: int,
     num_workers: int,
     pin_memory: bool,
@@ -353,6 +423,7 @@ def train(
     t_mult: int,
     stable_steps: int,
     decay_steps: int,
+    **kwargs,
 ):
     assert train_type in ["seq", "sft", "dpo", "grpo"]
     assert os.path.exists(param_path)
@@ -368,12 +439,12 @@ def train(
         window_size = config.max_len
 
     strategy_kwargs = {
-        "beta": dpo_beta,
-        "label_smoothing": label_smoothing,
-        "clip_eps": grpo_clip_eps,
-        "kl_coef": grpo_kl_coef,
-        "group_size": group_size,
-        "sync_interval": grpo_sync_interval,
+        "beta": kwargs.pop("dpo_beta"),
+        "label_smoothing": kwargs.pop("label_smoothing"),
+        "clip_eps": kwargs.pop("grpo_clip_eps"),
+        "kl_coef": kwargs.pop("grpo_kl_coef"),
+        "group_size": kwargs.pop("group_size"),
+        "sync_interval": kwargs.pop("grpo_sync_interval"),
     }
 
     executor_kwargs = {
@@ -391,11 +462,12 @@ def train(
 
     optimizer_fn = partial(
         create_optimizer,
-        **{
-            "lr": max_lr,
-            "betas": (adamw_beta1, adamw_beta2),
-            "weight_decay": adamw_weight_decay,
-        },
+        lr=kwargs.pop("max_lr"),
+        weight_decay=kwargs.pop("weight_decay"),
+        momentum=kwargs.pop("muon_momentum"),
+        nesterov=kwargs.pop("muon_nesterov"),
+        ns_steps=kwargs.pop("muon_ns_steps"),
+        adjust_lr_fn=kwargs.pop("muon_adjust_lr"),
     )
 
     total_steps = compute_total_steps(

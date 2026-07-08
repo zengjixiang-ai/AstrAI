@@ -8,10 +8,11 @@
 template <int HEAD_DIM>
 static void dispatch_prefill(GQAParams& p) {
 #ifndef ASTRAI_NO_MMA
-    constexpr int WARPS = 4, BC = 32, BR = 16, LD = HEAD_DIM + 8;
+    constexpr int WARPS = 4, BC = 32, BR = 16, LD = HEAD_DIM;
     dim3 grid((p.q_len + BR * WARPS - 1) / (BR * WARPS), p.q_head, p.batch);
     dim3 block(WARPS * 32, 1, 1);
-    int smem = (2 * BC * LD + WARPS * BR * LD) * (int)sizeof(bf16);
+    // sK + sV (each BC*LD) + shared sQ staging (BR*LD)
+    int smem = (2 * BC * LD + BR * LD) * (int)sizeof(bf16);
     cudaFuncSetAttribute(gqa_prefill_attn_mma_kernel<HEAD_DIM, WARPS, BC>,
                          cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
     gqa_prefill_attn_mma_kernel<HEAD_DIM, WARPS, BC><<<grid, block, smem>>>(p);
@@ -67,6 +68,9 @@ torch::Tensor gqa_prefill_attn(
     p.o = (bf16*)O.data_ptr();
 
     switch (p.head_dim) {
+        case 32:
+            dispatch_prefill<32>(p);
+            break;
         case 64:
             dispatch_prefill<64>(p);
             break;
@@ -78,7 +82,7 @@ torch::Tensor gqa_prefill_attn(
             break;
         default:
             TORCH_CHECK(false, "prefill: unsupported head_dim ", p.head_dim,
-                        " (supported: 64,128,256)");
+                        " (supported: 32,64,128,256)");
     }
     return O;
 }
