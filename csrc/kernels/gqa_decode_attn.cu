@@ -8,14 +8,15 @@
 template <int HEAD_DIM>
 static void dispatch_decode(GQAParams& p) {
 #ifndef ASTRAI_NO_MMA
-    constexpr int BC = 32, LD = HEAD_DIM + 8;
+    constexpr int BC = 32, BR = 16, LD = HEAD_DIM;  // XOR swizzle → no padding
     int G = p.q_head / p.kv_head;
     // head-packing tensor-core path needs 1 < G <= 16 (MMA M dim) and no mask;
     // everything else uses the scalar kernel
     if (!p.use_mask && G > 1 && G <= 16) {
         dim3 grid(p.kv_head, p.batch, 1);
         dim3 block(32, 1, 1);
-        int smem = (2 * BC * LD + 16 * LD) * (int)sizeof(bf16);
+        // sK + sV + sQ, each BC/BR * LD (single buffer for high occupancy)
+        int smem = (2 * BC * LD + BR * LD) * (int)sizeof(bf16);
         cudaFuncSetAttribute(gqa_decode_attn_mma_kernel<HEAD_DIM, BC>,
                              cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
         gqa_decode_attn_mma_kernel<HEAD_DIM, BC><<<grid, block, smem>>>(p);

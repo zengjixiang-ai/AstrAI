@@ -11,7 +11,7 @@ static void dispatch_prefill(GQAParams& p) {
     constexpr int WARPS = 4, BC = 32, BR = 16, LD = HEAD_DIM;
     dim3 grid((p.q_len + BR * WARPS - 1) / (BR * WARPS), p.q_head, p.batch);
     dim3 block(WARPS * 32, 1, 1);
-    // shared sQ: single staging area (BR*LD), not per-warp
+    // sK + sV (each BC*LD) + shared sQ staging (BR*LD)
     int smem = (2 * BC * LD + BR * LD) * (int)sizeof(bf16);
     cudaFuncSetAttribute(gqa_prefill_attn_mma_kernel<HEAD_DIM, WARPS, BC>,
                          cudaFuncAttributeMaxDynamicSharedMemorySize, smem);

@@ -12,15 +12,11 @@
 // repack; row reductions fold across the 4-lane thread group. Templated on
 // <HEAD_DIM, WARPS, BC> with BC a multiple of 16.
 //
-// Optimizations vs v6 baseline: shared sQ staging (single area, serialized
-// per-warp load) → cuts smem from (2*BC + WARPS*BR)*LD to (2*BC + BR)*LD bf16,
-// raising occupancy; pre-scale Q by attention scale during Q load → removes
-// per-tile scale multiply in the softmax loop; cp.async global→shared for K/V
-// full-tile loads → eliminates shared-store bank conflicts and register staging,
-// scalar fallback only for the last partial tile; causal tile skipping (block-
-// level early break + warp-level skip); XOR swizzle (swiz_col) at 8-bf16 chunk
-// granularity → eliminates ldmatrix bank conflicts without LD padding, setting
-// LD=HEAD_DIM (zero waste).
+// Optimizations: shared sQ staging (single area, serialized per-warp load)
+// → cuts smem; pre-scale Q by attention scale during Q load; cp.async global→
+// shared for K/V; scalar fallback only for the last partial tile; causal tile
+// skipping (block-level early break + warp-level skip); XOR swizzle (swiz_col)
+// → eliminates ldmatrix bank conflicts without LD padding (LD=HEAD_DIM).
 
 template <int HEAD_DIM, int WARPS, int BC>
 __global__ void gqa_prefill_attn_mma_kernel(GQAParams p) {
