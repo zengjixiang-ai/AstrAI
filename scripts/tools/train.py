@@ -1,7 +1,7 @@
 import argparse
 import os
 from functools import partial
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 import torch
 import torch.optim as optim
@@ -14,7 +14,7 @@ from astrai.model.components.decoder_block import DecoderBlock
 from astrai.trainer import SchedulerFactory, Trainer
 
 
-class MuonMix:
+class MuonMix(optim.Optimizer):
     """Combined Muon (matrix) + AdamW (non-matrix) optimizer."""
 
     def __init__(
@@ -27,6 +27,17 @@ class MuonMix:
         ns_steps: int = 5,
         adjust_lr_fn: str = "match_rms_adamw",
     ):
+        defaults = dict(
+            lr=lr,
+            weight_decay=weight_decay,
+            momentum=momentum,
+            nesterov=nesterov,
+            ns_steps=ns_steps,
+            adjust_lr_fn=adjust_lr_fn,
+        )
+        params = [p for p in model.parameters() if p.requires_grad]
+        super().__init__(params, defaults)
+
         matrix_params: list[Tensor] = []
         other_params: list[Tensor] = []
         for name, param in model.named_parameters():
@@ -53,10 +64,9 @@ class MuonMix:
             fused=True,
         )
 
-    @property
-    def param_groups(self) -> List[Dict[str, Any]]:
-        return [*self.muon.param_groups, *self.adamw.param_groups]
+        self.param_groups = [*self.muon.param_groups, *self.adamw.param_groups]
 
+    @torch.no_grad()
     def step(self, closure=None):
         self.muon.step(closure)
         self.adamw.step(closure)
